@@ -25,24 +25,73 @@ def _init_worker(res_map: dict[int, str]) -> None:
 
 
 def load_resource_map(apktool_root: str) -> dict[int, str]:
-    """Parse res/values/public.xml into {int_id: 'type/name'}.
+    """Parse public.xml + per-type values XMLs into {int_id: 'token'}.
 
-    Resource IDs in smali appear as integer constants (e.g.
-    `const v0, 0x7f0a01b2`). Resolving them to symbolic names like
-    'id/profile_button' adds a huge cross-version-stable signal —
-    resource names rarely change even when class names rotate.
+    The 'token' is what we put into the class's strings[] when we see
+    a const-of-that-id in smali. Two challenges:
+
+      * Numeric R IDs are NOT stable across builds — the same string
+        gets a different 0x7f... ID in v415 vs v416.
+      * apktool often strips human-readable names ('APKTOOL_RENAMED_…').
+        Those names ARE stable per build but mean nothing across builds.
+
+    Strategy: for resources that have a literal text value (string,
+    bool, integer, dimen, color, drawable name, etc.), use the value
+    itself. The literal text "Add billing address" is identical in
+    both builds and pins the class that uses it. For resources that
+    have no useful literal (anim, attr), fall back to the type-name
+    placeholder, which at least gives weak shape signal.
     """
     import xml.etree.ElementTree as ET
-    path = os.path.join(apktool_root, "res", "values", "public.xml")
-    if not os.path.exists(path):
+    base = os.path.join(apktool_root, "res", "values")
+    public_path = os.path.join(base, "public.xml")
+    if not os.path.exists(public_path):
         return {}
+
+    # Pre-load the per-type XMLs we have literal values for.
+    name_to_value: dict[str, dict[str, str]] = {}
+    for fn in ("strings.xml", "bools.xml", "integers.xml", "dimens.xml",
+               "colors.xml", "drawables.xml", "ids.xml"):
+        path = os.path.join(base, fn)
+        if not os.path.exists(path):
+            continue
+        d: dict[str, str] = {}
+        try:
+            for el in ET.parse(path).getroot():
+                name = el.attrib.get("name")
+                if not name:
+                    continue
+                # Most entries have text content; a few self-close.
+                d[name] = (el.text or "").strip()
+        except ET.ParseError:
+            continue
+        name_to_value[fn[:-4]] = d
+        # Also map plural type 'string' from strings.xml etc.
+    name_to_value.setdefault("string", name_to_value.pop("strings", {}))
+    name_to_value.setdefault("bool", name_to_value.pop("bools", {}))
+    name_to_value.setdefault("integer", name_to_value.pop("integers", {}))
+    name_to_value.setdefault("dimen", name_to_value.pop("dimens", {}))
+    name_to_value.setdefault("color", name_to_value.pop("colors", {}))
+    name_to_value.setdefault("drawable", name_to_value.pop("drawables", {}))
+    name_to_value.setdefault("id", name_to_value.pop("ids", {}))
+
     out: dict[int, str] = {}
-    for el in ET.parse(path).getroot().iter("public"):
+    for el in ET.parse(public_path).getroot().iter("public"):
         try:
             rid = int(el.attrib["id"], 16)
         except (KeyError, ValueError):
             continue
-        out[rid] = f"R.{el.attrib['type']}.{el.attrib['name']}"
+        rtype = el.attrib.get("type", "")
+        rname = el.attrib.get("name", "")
+        # Prefer literal value when available; resource IDs change
+        # across builds but the underlying string/value doesn't.
+        v = name_to_value.get(rtype, {}).get(rname, "")
+        if v:
+            out[rid] = f"R.{rtype}={v[:80]}"   # truncate huge strings
+        else:
+            # Fallback: type-name only (the apktool-renamed name is
+            # not stable across builds either).
+            out[rid] = f"R.{rtype}"
     return out
 
 # --------------------------------------------------------------------------- #

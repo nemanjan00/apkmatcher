@@ -725,6 +725,99 @@ class JaccardStrings:
                                 ("jaccard_strings", round(jac, 2), n))
 
 
+class ExtendedByLockStep:
+    """Tier-3, pin a super class by the (mapped) classes that extend it.
+
+    For each unmatched A class C: look at A.reverse_neighbours(C, "extends")
+    — every class that DECLARES C as its super. Among those that are
+    already mapped, look at the B-side image's super. If all the
+    B-side supers point to the same (unmatched) B class, that's C's
+    match.
+
+    Cheaper and more conservative than the general ReverseLockStep
+    because it filters to a single edge kind. Targets the
+    'unmatched super' deadlock case where many extends-children share
+    a parent that has no other distinguishing signal of its own.
+    """
+    tier = 3
+
+    def __init__(self, min_mapped: int = 2):
+        self.min_mapped = min_mapped
+        self.id = f"extended_by_lockstep_n{min_mapped}"
+
+    def propose(self, a, b, mapping):
+        for cid in a.ids():
+            if mapping.get(cid) is not None:
+                continue
+            children = list(a.reverse_neighbours(cid, "extends"))
+            mapped_children = [mapping.get(ch) for ch in children
+                               if mapping.get(ch) is not None]
+            if len(mapped_children) < self.min_mapped:
+                continue
+            # Collect each mapped child's B-side super.
+            b_supers = set()
+            for mc in mapped_children:
+                rb = b.get(mc)
+                if rb is None: continue
+                bs = rb.get("super")
+                if bs:
+                    b_supers.add(bs)
+                    if len(b_supers) > 1: break
+            if len(b_supers) != 1:
+                continue
+            (bsuper,) = b_supers
+            # B-side super must itself be unmatched (we're proposing it as C's match).
+            if mapping.inverse(bsuper) is not None:
+                continue
+            conf = min(0.85 + 0.03 * len(mapped_children), 0.97)
+            yield Candidate(cid, bsuper, conf, self.id,
+                            ("extended_by", len(mapped_children)))
+
+
+class ImplementedByLockStep:
+    """Tier-3, pin an interface by the (mapped) classes that implement it.
+    Mirror of ExtendedByLockStep for interface implementations.
+    """
+    tier = 3
+
+    def __init__(self, min_mapped: int = 3):
+        self.min_mapped = min_mapped
+        self.id = f"implemented_by_lockstep_n{min_mapped}"
+
+    def propose(self, a, b, mapping):
+        for cid in a.ids():
+            if mapping.get(cid) is not None:
+                continue
+            implementors = list(a.reverse_neighbours(cid, "implements"))
+            mapped = [mapping.get(c) for c in implementors
+                      if mapping.get(c) is not None]
+            if len(mapped) < self.min_mapped:
+                continue
+            # Each mapped B implementor declares some impls. The
+            # candidate B interface(s) are the ones present in EVERY
+            # mapped implementor's impls list. (Intersection.)
+            cand: set | None = None
+            for mc in mapped:
+                rb = b.get(mc)
+                if rb is None: continue
+                bset = set(rb.get("impls", ()))
+                if not bset:
+                    cand = set(); break
+                cand = bset if cand is None else (cand & bset)
+                if not cand:
+                    break
+            if not cand:
+                continue
+            # Restrict to unmatched B classes.
+            cand = {x for x in cand if mapping.inverse(x) is None}
+            if len(cand) != 1:
+                continue
+            (bcid,) = cand
+            conf = min(0.85 + 0.02 * len(mapped), 0.97)
+            yield Candidate(cid, bcid, conf, self.id,
+                            ("implemented_by", len(mapped)))
+
+
 class ReverseLockStep:
     """Tier-3, mirrors LockStep but uses INCOMING edges.
 
@@ -1013,6 +1106,8 @@ DEFAULT_MATCHERS = [
     LockStep(min_mapped=3),
     ReverseLockStep(min_mapped=4),
     ReverseLockStep(min_mapped=3),
+    ExtendedByLockStep(min_mapped=2),
+    ImplementedByLockStep(min_mapped=3),
     MethodCallSetSubstituted(),
     WeightedNeighbourVote(min_votes=6),
     BodyHashSubstituted(),

@@ -114,7 +114,9 @@ since non-LX classes are free anchors that round-trip by FQN.
 | + EnumValueNames (tier 2) + LockStep (tier 3) | 67.0 % | — | 64.1 % | 99.2 % | 73.4 % | 9949 | 0.787 | 52 s |
 | + JaccardStrings (tier 2) + looser LockStep n=3 | 67.7 % | — | 64.7 % | 99.2 % | 74.1 % | 10340 | 0.790 | 69 s |
 | + ReverseLockStep + tier3_max_iters=20 | 71.7 % | — | 68.7 % | 99.2 % | 76.8 % | 10373 | 0.805 | 235 s |
-| + MethodCallSetSubstituted (per-method index) | **71.9 %** | **68.6 %** | **68.8 %** | 99.2 % | **77.3 %** | **13387** | **0.807** | 396 s |
+| + MethodCallSetSubstituted (per-method index) | 71.9 % | 68.6 % | 68.8 % | 99.2 % | 77.3 % | 13387 | 0.807 | 396 s |
+| + ExtendedByLockStep + ImplementedByLockStep | 72.7 % | 69.5 % | 69.5 % | 99.2 % | 77.4 % | 13484 | 0.809 | 403 s |
+| + resource-id resolves to literal string value (was apktool placeholder) | **72.6 %** | 69.4 % | 69.5 % | 99.2 % | **77.4 %** | **14152** | **0.809** | 407 s |
 
 ## Status
 
