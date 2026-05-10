@@ -601,6 +601,81 @@ class FieldTargetMultiset:
                                     ("field_targets_ms", len(alst), len(blst)))
 
 
+class MethodCallSetSubstituted:
+    """Tier 3. For each A class, compute a per-method 'API surface'
+    fingerprint:
+
+       method_fp = hash( substituted (target_class, member) calls,
+                         substituted (target_class, field) accesses,
+                         param/return types substituted,
+                         branch count, string count )
+
+    Class fingerprint = sorted multiset of per-method fingerprints.
+    Match against the same B-side multiset (B's methods need no
+    substitution — they're in B's own LX namespace).
+
+    The crucial bit: substitution lifts A's bodies into a
+    B-comparable namespace, so two classes that differ only by which
+    LX names rotated still produce the same fingerprint once those
+    LX names are mapped. Adds independent signal beyond
+    `call_targets_sub` (which works at class-level multiset only).
+    """
+    id = "method_callset_sub"; tier = 3
+
+    def __init__(self, min_methods: int = 2):
+        self.min_methods = min_methods
+
+    def _sub_ref(self, ref: str, mapping) -> str:
+        if ref.startswith("LX/"):
+            return mapping.get(ref) or ref
+        return ref
+
+    def _sub_sig(self, sig: str, mapping) -> str:
+        out = []; i = 0
+        while i < len(sig):
+            c = sig[i]
+            if c == "L":
+                e = sig.find(";", i)
+                if e == -1: out.append(sig[i:]); break
+                ref = sig[i:e+1]
+                out.append(self._sub_ref(ref, mapping))
+                i = e + 1; continue
+            out.append(c); i += 1
+        return "".join(out)
+
+    def _method_fp(self, m: dict, mapping) -> str:
+        cs = sorted({(self._sub_ref(c, mapping), n) for c, n in m["calls"]})
+        fs = sorted({(self._sub_ref(c, mapping), n) for c, n in m["facc"]})
+        sig_sub = self._sub_sig(m["sig"], mapping)
+        return _fp("mfp", sig_sub, cs, fs, m["br"], len(m["strs"]))
+
+    def _class_fp(self, rec: dict, mapping) -> str | None:
+        ms = rec.get("methods", ())
+        if len(ms) < self.min_methods:
+            return None
+        fps = sorted(self._method_fp(m, mapping) for m in ms)
+        return _fp("cls", fps)
+
+    def propose(self, a, b, mapping):
+        # Identity sub for B side.
+        class _IdMapping:
+            def get(self, x): return None
+        idmap = _IdMapping()
+        Bidx = defaultdict(list)
+        for r in b.classes():
+            h = self._class_fp(r, idmap)
+            if h: Bidx[h].append(r["id"])
+        for r in a.classes():
+            h = self._class_fp(r, mapping)
+            if not h: continue
+            blst = Bidx.get(h)
+            if not blst: continue
+            conf = _specificity_confidence(0.9, 1, len(blst))
+            for bid in blst:
+                yield Candidate(r["id"], bid, conf, self.id,
+                                ("method_callset_sub", len(blst)))
+
+
 class JaccardStrings:
     """Tier 2. Fuzzy match by Jaccard similarity over the string set.
 
@@ -810,6 +885,52 @@ class LockStep:
                             ("lockstep", len(mapped_b_targets)))
 
 
+class SiblingByMappedInterfaces:
+    """Tier-3. Classes that implement the SAME mapped interface set
+    AND share a structural shape are typically siblings in the
+    same hierarchy. Catches listener/callback / data-transfer-object
+    classes that have no super beyond Object but implement one or
+    more (mapped) interfaces.
+
+    Bucket key: (sorted_mapped_impls, nm, nf, ns, mods).
+    Yields candidates when both A and B side bucket has exactly one
+    class.
+    """
+    id = "sibling_impls"; tier = 3
+
+    def _impls_substituted(self, cls: dict, mapping) -> tuple | None:
+        out = []
+        for x in cls.get("impls", ()):
+            if not x.startswith("LX/"):
+                out.append(x)
+            else:
+                m = mapping.get(x)
+                if m is None:
+                    return None  # don't fingerprint until everything resolves
+                out.append(m)
+        if not out:
+            return None
+        return tuple(sorted(out))
+
+    def propose(self, a, b, mapping):
+        Bidx = defaultdict(list)
+        for r in b.classes():
+            if not r["impls"]:
+                continue
+            key = (tuple(sorted(r["impls"])), r["nm"], r["nf"], r["ns"],
+                   r["nn"], tuple(r["mods"]))
+            Bidx[key].append(r["id"])
+        for r in a.classes():
+            ki = self._impls_substituted(r, mapping)
+            if ki is None:
+                continue
+            key = (ki, r["nm"], r["nf"], r["ns"], r["nn"], tuple(r["mods"]))
+            blst = Bidx.get(key)
+            if not blst or len(blst) != 1:
+                continue
+            yield Candidate(r["id"], blst[0], 0.7, self.id, ("sibling_impls",))
+
+
 class SiblingByMappedSuper:
     """Tier-3 matcher for tiny classes that share a (post-mapping)
     super and a structural shape.
@@ -892,8 +1013,12 @@ DEFAULT_MATCHERS = [
     LockStep(min_mapped=3),
     ReverseLockStep(min_mapped=4),
     ReverseLockStep(min_mapped=3),
+    MethodCallSetSubstituted(),
     WeightedNeighbourVote(min_votes=6),
     BodyHashSubstituted(),
     CallTargetWithSubstitution(min_targets=6),
     SiblingByMappedSuper(),
+    # SiblingByMappedInterfaces() — tried but regressed quality
+    # (matches lambdas that look alike; LockStep already covers
+    # the cases it gets right).
 ]

@@ -100,16 +100,21 @@ Every commit to this repo documents before/after measurements so
 regressions are catchable in `git log`. Baseline on Instagram
 415.0.0 vs 416.0.0 (157538 vs 164620 classes):
 
-| Iteration | A cov | B cov | Anchor prec | Neighbour | 2+ matchers | Overall | Wall |
-|---|---|---|---|---|---|---|---|
-| matchers only | 63.4 % | 60.6 % | 99.3 % | 70.0 % |  2497 | 0.770 | 18 s |
-| + validators (hard-veto only) | 62.4 % | 59.7 % | 99.3 % | 72.6 % | 2497 | 0.775 | 32 s |
-| + sibling-by-mapped-super, weighted vote, sig-substituted | 63.5 % | 60.8 % | 99.4 % | 75.1 % | 2506 | 0.783 | 33 s |
-| + call-target / field-target multisets w/ specificity scoring | 63.9 % | 61.1 % | 99.4 % | 75.3 % | 9082 | 0.786 | 46 s |
-| + neighbours()/reverse_neighbours() bug fix (yield+return) | 66.4 % | 63.6 % | 99.2 % | 73.1 % | 9770 | 0.785 | 51 s |
-| + EnumValueNames (tier 2) + LockStep (tier 3) | 67.0 % | 64.1 % | 99.2 % | 73.4 % | 9949 | 0.787 | 52 s |
-| + JaccardStrings (tier 2) + looser LockStep n=3 | 67.7 % | 64.7 % | 99.2 % | 74.1 % | 10340 | 0.790 | 69 s |
-| + ReverseLockStep + tier3_max_iters=20 | **71.7 %** | **68.7 %** | 99.2 % | **76.8 %** | 10373 | **0.805** | 235 s |
+A coverage = matched / total A classes (157538). LX coverage =
+matched obfuscated / total obfuscated (140290) — the honest signal,
+since non-LX classes are free anchors that round-trip by FQN.
+
+| Iteration | A cov | LX cov | B cov | Anchor prec | Neighbour | 2+ matchers | Overall | Wall |
+|---|---|---|---|---|---|---|---|---|
+| matchers only | 63.4 % | — | 60.6 % | 99.3 % | 70.0 % |  2497 | 0.770 | 18 s |
+| + validators (hard-veto only) | 62.4 % | — | 59.7 % | 99.3 % | 72.6 % | 2497 | 0.775 | 32 s |
+| + sibling-by-mapped-super, weighted vote, sig-substituted | 63.5 % | — | 60.8 % | 99.4 % | 75.1 % | 2506 | 0.783 | 33 s |
+| + call-target / field-target multisets w/ specificity scoring | 63.9 % | — | 61.1 % | 99.4 % | 75.3 % | 9082 | 0.786 | 46 s |
+| + neighbours()/reverse_neighbours() bug fix (yield+return) | 66.4 % | — | 63.6 % | 99.2 % | 73.1 % | 9770 | 0.785 | 51 s |
+| + EnumValueNames (tier 2) + LockStep (tier 3) | 67.0 % | — | 64.1 % | 99.2 % | 73.4 % | 9949 | 0.787 | 52 s |
+| + JaccardStrings (tier 2) + looser LockStep n=3 | 67.7 % | — | 64.7 % | 99.2 % | 74.1 % | 10340 | 0.790 | 69 s |
+| + ReverseLockStep + tier3_max_iters=20 | 71.7 % | — | 68.7 % | 99.2 % | 76.8 % | 10373 | 0.805 | 235 s |
+| + MethodCallSetSubstituted (per-method index) | **71.9 %** | **68.6 %** | **68.8 %** | 99.2 % | **77.3 %** | **13387** | **0.807** | 396 s |
 
 ## Status
 

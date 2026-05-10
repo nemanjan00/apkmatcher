@@ -109,6 +109,17 @@ def evaluate(result: dict, A: InMemoryProject, B: InMemoryProject) -> dict:
     a_cov = result["summary"]["a_coverage"]
     b_cov = result["summary"]["b_coverage"]
 
+    # Obfuscated-only coverage. The non-LX classes are 'free' anchors —
+    # they round-trip by FQN and aren't really what we're trying to
+    # recover. The honest progress signal is matched_obfuscated /
+    # total_obfuscated, which strips the trivial denominator inflation.
+    a_obf_total = sum(1 for c in A.classes() if A.is_obfuscated(c["id"]))
+    b_obf_total = sum(1 for c in B.classes() if B.is_obfuscated(c["id"]))
+    a_obf_matched = sum(1 for m in mapping if A.is_obfuscated(m["a"]))
+    b_obf_matched = sum(1 for m in mapping if B.is_obfuscated(m["b"]))
+    a_obf_cov = a_obf_matched / a_obf_total if a_obf_total else 0.0
+    b_obf_cov = b_obf_matched / b_obf_total if b_obf_total else 0.0
+
     # Blended overall score (heuristic weights):
     #   anchor precision    : 0.30  — must not lie about anchors
     #   neighbour consistency: 0.25 — graph self-consistency
@@ -124,7 +135,12 @@ def evaluate(result: dict, A: InMemoryProject, B: InMemoryProject) -> dict:
     )
 
     return {
-        "coverage": {"a": a_cov, "b": b_cov},
+        "coverage": {
+            "a": a_cov, "b": b_cov,
+            "a_obfuscated": a_obf_cov, "b_obfuscated": b_obf_cov,
+            "a_obfuscated_matched": a_obf_matched,
+            "a_obfuscated_total": a_obf_total,
+        },
         "one_to_one_ratio": one_to_one_ratio,
         "anchor_recovery": {
             "stable_total": len(stable_in_both),
