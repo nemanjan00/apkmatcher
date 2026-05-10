@@ -76,7 +76,21 @@ class MutableMapping:
     def propose(self, a: str, b: str, confidence: float,
                 matcher_ids: list[str], lock: bool = False) -> str:
         """Returns the outcome: 'added' / 'updated' / 'displaced' /
-        'rejected' / 'locked-blocked' / 'negative'."""
+        'rejected' / 'locked-blocked' / 'negative' / 'cross-ns'."""
+
+        # Cross-namespace guard: stable (non-LX) classes from one APK
+        # MUST match a stable class with the same FQN — otherwise the
+        # match is nonsense (the class either exists with the same
+        # name in B or doesn't exist at all). Catches noisy matchers
+        # like native_syms that find shared JNI symbol patterns
+        # across unrelated classes.
+        a_stable = not a.startswith("LX/")
+        b_stable = not b.startswith("LX/")
+        if a_stable != b_stable:
+            return "cross-ns"
+        if a_stable and a != b:
+            return "cross-ns"
+
         cur_b = self._a2b.get(a)
         cur_b_owner = self._b2a.get(b)
 
