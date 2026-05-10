@@ -105,7 +105,8 @@ regressions are catchable in `git log`. Baseline on Instagram
 | matchers only | 63.4 % | 60.6 % | 99.3 % | 70.0 % |  2497 | 0.770 | 18 s |
 | + validators (hard-veto only) | 62.4 % | 59.7 % | 99.3 % | 72.6 % | 2497 | 0.775 | 32 s |
 | + sibling-by-mapped-super, weighted vote, sig-substituted | 63.5 % | 60.8 % | 99.4 % | 75.1 % | 2506 | 0.783 | 33 s |
-| + call-target / field-target multisets w/ specificity scoring | **63.9 %** | **61.1 %** | 99.4 % | 75.3 % | **9082** | **0.786** | 46 s |
+| + call-target / field-target multisets w/ specificity scoring | 63.9 % | 61.1 % | 99.4 % | 75.3 % | 9082 | 0.786 | 46 s |
+| + neighbours()/reverse_neighbours() bug fix (yield+return) | **66.4 %** | **63.6 %** | 99.2 % | 73.1 % | 9770 | 0.785 | 51 s |
 
 ## Status
 

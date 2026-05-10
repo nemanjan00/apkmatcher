@@ -84,7 +84,12 @@ class InMemoryProject:
 
     def neighbours(self, cid: str, kind: Optional[str] = None) -> Iterator[str]:
         if kind is not None:
-            return iter(self._fwd[kind].get(cid, ()))
+            # Note: must `yield from`, NOT `return iter(...)` — this
+            # function contains a yield in the no-kind branch, which
+            # makes Python treat the entire function as a generator;
+            # a `return value` inside a generator is silently ignored.
+            yield from self._fwd[kind].get(cid, ())
+            return
         seen = set()
         for k_edges in self._fwd.values():
             for t in k_edges.get(cid, ()):
@@ -94,7 +99,8 @@ class InMemoryProject:
 
     def reverse_neighbours(self, cid: str, kind: Optional[str] = None) -> Iterator[str]:
         if kind is not None:
-            return iter(self._rev[kind].get(cid, ()))
+            yield from self._rev[kind].get(cid, ())
+            return
         seen = set()
         for k_edges in self._rev.values():
             for s in k_edges.get(cid, ()):
