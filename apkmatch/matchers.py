@@ -1064,6 +1064,67 @@ class SiblingByMappedInterfaces:
             yield Candidate(r["id"], blst[0], 0.7, self.id, ("sibling_impls",))
 
 
+class SiblingByMappedSuperLoose:
+    """Tier-3, relaxed variant of SiblingByMappedSuper.
+
+    Allows method/field counts to differ by ±1 between A and B
+    (small refactors that add or remove a single helper method).
+    Still requires (mapped_super, mods, sorted_impls_substituted).
+    Yields candidates only when the relaxed bucket on each side
+    contains a singleton. Lower confidence than the strict match.
+    """
+    id = "sibling_super_loose"; tier = 3
+
+    def _impls_substituted(self, cls: dict, mapping) -> tuple | None:
+        out = []
+        for x in cls.get("impls", ()):
+            if not x.startswith("LX/"):
+                out.append(x)
+            else:
+                m = mapping.get(x)
+                if m is None: return None
+                out.append(m)
+        return tuple(sorted(out))
+
+    def _mapped_super(self, cls: dict, mapping):
+        s = cls.get("super")
+        if not s or s == "Ljava/lang/Object;":
+            return None
+        if not s.startswith("LX/"):
+            return s
+        return mapping.get(s)
+
+    def propose(self, a, b, mapping):
+        Bbk = defaultdict(list)
+        for r in b.classes():
+            sb = r.get("super")
+            if not sb or sb == "Ljava/lang/Object;":
+                continue
+            key = (sb, tuple(sorted(r["impls"])), tuple(r["mods"]))
+            Bbk[key].append(r)
+        for r in a.classes():
+            sa = self._mapped_super(r, mapping)
+            if sa is None:
+                continue
+            ki = self._impls_substituted(r, mapping)
+            if ki is None:
+                continue
+            key = (sa, ki, tuple(r["mods"]))
+            blst = Bbk.get(key)
+            if not blst:
+                continue
+            # Filter by shape ± 1
+            ok = [b_rec for b_rec in blst
+                  if abs(b_rec["nm"] - r["nm"]) <= 1
+                  and abs(b_rec["nf"] - r["nf"]) <= 1
+                  and b_rec["nn"] == r["nn"]
+                  and mapping.inverse(b_rec["id"]) is None]
+            if len(ok) != 1:
+                continue
+            yield Candidate(r["id"], ok[0]["id"], 0.62, self.id,
+                            ("sibling_loose",))
+
+
 class SiblingByMappedSuper:
     """Tier-3 matcher for tiny classes that share a (post-mapping)
     super and a structural shape.
@@ -1154,6 +1215,7 @@ DEFAULT_MATCHERS = [
     BodyHashSubstituted(),
     CallTargetWithSubstitution(min_targets=6),
     SiblingByMappedSuper(),
+    SiblingByMappedSuperLoose(),
     # SiblingByMappedInterfaces() — tried but regressed quality
     # (matches lambdas that look alike; LockStep already covers
     # the cases it gets right).
