@@ -100,10 +100,12 @@ Every commit to this repo documents before/after measurements so
 regressions are catchable in `git log`. Baseline on Instagram
 415.0.0 vs 416.0.0 (157538 vs 164620 classes):
 
-| Iteration | A cov | B cov | Anchor prec | Neighbour | Overall | Wall |
-|---|---|---|---|---|---|---|
-| matchers only | 63.4 % | 60.6 % | 99.3 % | 70.0 % | 0.770 | 18 s |
-| + validators (hard-veto only) | 62.4 % | 59.7 % | 99.3 % | 72.6 % | 0.775 | 32 s |
+| Iteration | A cov | B cov | Anchor prec | Neighbour | 2+ matchers | Overall | Wall |
+|---|---|---|---|---|---|---|---|
+| matchers only | 63.4 % | 60.6 % | 99.3 % | 70.0 % |  2497 | 0.770 | 18 s |
+| + validators (hard-veto only) | 62.4 % | 59.7 % | 99.3 % | 72.6 % | 2497 | 0.775 | 32 s |
+| + sibling-by-mapped-super, weighted vote, sig-substituted | 63.5 % | 60.8 % | 99.4 % | 75.1 % | 2506 | 0.783 | 33 s |
+| + call-target / field-target multisets w/ specificity scoring | **63.9 %** | **61.1 %** | 99.4 % | 75.3 % | **9082** | **0.786** | 46 s |
 
 ## Status
 

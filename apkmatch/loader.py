@@ -130,6 +130,15 @@ def parse_class(path: str, bucket: str) -> dict | None:
     facc: set[str] = set()
     trefs: set[str] = set()
     native_syms: list[str] = []
+    # Method-level callsites & field accesses: (target_class, member_name)
+    # tuples. Captures "who do I call" at the method-name granularity,
+    # which is much more discriminating than just "which class". Member
+    # names that are themselves obfuscated (single-letter / LX-style)
+    # are kept verbatim — the next-version-equivalent pair is just as
+    # likely to use the same rotated names on both sides if the call
+    # target is an LX class that survives unchanged.
+    call_targets: list[tuple[str, str]] = []
+    field_targets: list[tuple[str, str]] = []
 
     in_method = False
     cur_body: list[str] = []
@@ -164,6 +173,11 @@ def parse_class(path: str, bucket: str) -> dict | None:
                         cls = line[sp+1:arrow]
                         if cls.startswith("L") and cls.endswith(";"):
                             calls.add(cls)
+                            # Capture (class, method-name) — strip params
+                            paren = line.find("(", arrow + 2)
+                            if paren != -1:
+                                mname = line[arrow+2:paren]
+                                call_targets.append((cls, mname))
                 cur_body.append(_normalize_op(line))
                 continue
             if line[:4] in ("iget", "iput", "sget", "sput"):
@@ -174,6 +188,10 @@ def parse_class(path: str, bucket: str) -> dict | None:
                         cls = line[sp+1:arrow]
                         if cls.startswith("L") and cls.endswith(";"):
                             facc.add(cls)
+                            colon = line.find(":", arrow + 2)
+                            if colon != -1:
+                                fname = line[arrow+2:colon]
+                                field_targets.append((cls, fname))
                 cur_body.append(_normalize_op(line))
                 continue
             if (line.startswith(P_NEW) or line.startswith(P_CHECK)
@@ -259,6 +277,8 @@ def parse_class(path: str, bucket: str) -> dict | None:
         "bucket": bucket, "sigs": sigs, "bh": body_hashes,
         "calls": sorted(calls), "facc": sorted(facc), "trefs": sorted(trefs),
         "native_syms": native_syms,
+        "call_targets": call_targets,   # list[(class, method)]
+        "field_targets": field_targets, # list[(class, field)]
     }
 
 

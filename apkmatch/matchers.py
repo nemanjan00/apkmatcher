@@ -298,20 +298,334 @@ class NeighbourVote:
                             ("neighbour_vote", top_v, second))
 
 
+class BodyHashSubstituted:
+    """Re-hash A's method body opcodes after substituting matched LX
+    refs through the current mapping. Match against B's raw body
+    hashes — catches classes whose internals are otherwise identical
+    once the rotated names are accounted for.
+
+    Tier 3 because it depends on having enough of the mapping built
+    by tier 1 and 2 to be useful. Re-runs each tier-3 sweep, picking
+    up newly mappable classes.
+
+    Note: `bh` records in the indexed JSONL are the RAW body hash with
+    no substitution. To do substitution we'd need the raw smali lines
+    again. As a proxy we operate at the granularity of the per-class
+    'sigs' (method signatures) plus per-class stable-ref multiset —
+    both already in the index. This is a structural fingerprint, not
+    a true bytecode hash, but is cheap and adds signal that the
+    earlier matchers' signature work missed because they didn't apply
+    substitution.
+    """
+    id = "sig_substituted"; tier = 3
+
+    def _substitute(self, sig: str, mapping) -> str:
+        out = []
+        i = 0
+        while i < len(sig):
+            c = sig[i]
+            if c == "L":
+                e = sig.find(";", i)
+                if e == -1:
+                    out.append(sig[i:]); break
+                ref = sig[i:e+1]
+                if ref.startswith("LX/"):
+                    mapped = mapping.get(ref)
+                    out.append(mapped or "LX/?;")
+                else:
+                    out.append(ref)
+                i = e + 1
+                continue
+            out.append(c); i += 1
+        return "".join(out)
+
+    def propose(self, a, b, mapping):
+        # Build B's signature multiset hashes as-is.
+        Bidx = defaultdict(list)
+        for r in b.classes():
+            if not r["sigs"] or r["nm"] < 2:
+                continue
+            h = _fp("sgs", sorted(r["sigs"]))
+            Bidx[h].append(r["id"])
+        for r in a.classes():
+            if not r["sigs"] or r["nm"] < 2:
+                continue
+            sub = sorted(self._substitute(s, mapping) for s in r["sigs"])
+            # Skip if substitution didn't actually change anything
+            # (then we'd be duplicating signature_multiset's work)
+            if sub == sorted(r["sigs"]):
+                continue
+            # Skip if too many unresolved refs leaked through
+            unresolved = sum(s.count("LX/?;") for s in sub)
+            if unresolved > len(sub):
+                continue
+            h = _fp("sgs", sub)
+            for bid in Bidx.get(h, ()):
+                yield Candidate(r["id"], bid, 0.7, self.id, ("sig_sub",))
+
+
+# Edge-kind weights for NeighbourVote — inheritance is far more
+# discriminating than a single call, which can come from anywhere.
+EDGE_WEIGHTS = {
+    "extends":      4,
+    "implements":   4,
+    "annotation":   3,
+    "field_access": 2,
+    "type_ref":     2,
+    "call":         1,
+}
+
+
+class WeightedNeighbourVote(NeighbourVote):
+    """Neighbour vote with per-edge-kind weights."""
+    id = "neighbour_vote_w"; tier = 3
+
+    def __init__(self, min_votes: int = 6, max_rev_b: int = 200,
+                 weights: dict | None = None):
+        super().__init__(min_votes=min_votes, max_rev_b=max_rev_b)
+        self.weights = weights or EDGE_WEIGHTS
+
+    def propose(self, a, b, mapping):
+        votes: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        for a_x, b_x in mapping:
+            for kind, weight in self.weights.items():
+                rev_b = list(b.reverse_neighbours(b_x, kind))
+                if not rev_b or len(rev_b) > self.max_rev_b:
+                    continue
+                for a_voter in a.reverse_neighbours(a_x, kind):
+                    if mapping.get(a_voter) is not None:
+                        continue
+                    voter_votes = votes[a_voter]
+                    for nb in rev_b:
+                        voter_votes[nb] += weight
+        for a_cid, vmap in votes.items():
+            if not vmap: continue
+            top_b, top_v = max(vmap.items(), key=lambda kv: kv[1])
+            if top_v < self.min_votes:
+                continue
+            second = max((v for k, v in vmap.items() if k != top_b), default=0)
+            if top_v - second < 2:
+                continue
+            conf = min(0.55 + 0.02 * (top_v - second), 0.92)
+            yield Candidate(a_cid, top_b, conf, self.id,
+                            ("nv_w", top_v, second))
+
+
+def _specificity_confidence(base: float, n_a: int, n_b: int,
+                            ceiling: float = 0.95) -> float:
+    """Confidence as a function of bucket size on each side.
+
+    A fingerprint that uniquely identifies one class on each side
+    is high-confidence; one that fires across many classes is low.
+    Returns `base` when n_a == n_b == 1 and tapers down with the
+    product of the bucket sizes.
+    """
+    n = n_a * n_b
+    if n <= 1:
+        return min(base, ceiling)
+    # 1/sqrt(n) falloff with floor
+    import math
+    return max(base / math.sqrt(n), 0.4)
+
+
+class CallTargetMultiset:
+    """Multiset of stable-only (class, method-name) call-targets.
+
+    Two classes that call the EXACT SAME multiset of (foo.Bar, method1)
+    + (foo.Baz, method2) + ... are almost certainly the same class.
+    Stable-only ensures the signal isn't washed out by LX-name rotation.
+
+    Confidence scales with bucket specificity: a fingerprint shared by
+    one A and one B class fires at near-1.0; a fingerprint shared by
+    100 A and 100 B classes scores much lower.
+    """
+    id = "call_targets_ms"; tier = 2
+
+    def __init__(self, min_targets: int = 4):
+        self.min_targets = min_targets
+
+    def _fp_for(self, rec: dict) -> str | None:
+        # Filter to stable-class call targets only.
+        ts = sorted({(c, m) for c, m in rec.get("call_targets", ())
+                     if not c.startswith("LX/")})
+        if len(ts) < self.min_targets:
+            return None
+        return _fp("ctm", ts)
+
+    def propose(self, a, b):
+        Bbk = defaultdict(list); Abk = defaultdict(list)
+        for r in b.classes():
+            h = self._fp_for(r)
+            if h: Bbk[h].append(r["id"])
+        for r in a.classes():
+            h = self._fp_for(r)
+            if h: Abk[h].append(r["id"])
+        for h, alst in Abk.items():
+            blst = Bbk.get(h)
+            if not blst: continue
+            conf = _specificity_confidence(0.9, len(alst), len(blst))
+            for ai in alst:
+                for bi in blst:
+                    yield Candidate(ai, bi, conf, self.id,
+                                    ("call_targets_ms", len(alst), len(blst)))
+
+
+class CallTargetWithSubstitution:
+    """Same as CallTargetMultiset, but substitutes LX class refs through
+    the current mapping. Tier 3 because it depends on a partially-built
+    mapping. Catches classes whose API surface is identical once
+    obfuscated callees are resolved."""
+    id = "call_targets_sub"; tier = 3
+
+    def __init__(self, min_targets: int = 6):
+        self.min_targets = min_targets
+
+    def _fp_for(self, rec: dict, sub) -> str | None:
+        ts = []
+        for c, m in rec.get("call_targets", ()):
+            if c.startswith("LX/"):
+                mc = sub(c)
+                if mc is None:
+                    continue   # skip unresolved
+                ts.append((mc, m))
+            else:
+                ts.append((c, m))
+        ts = sorted(set(ts))
+        if len(ts) < self.min_targets:
+            return None
+        return _fp("cts", ts)
+
+    def propose(self, a, b, mapping):
+        # B side: identity sub (B's call_targets already use B-side names).
+        identity = lambda x: x
+        Bbk = defaultdict(list)
+        for r in b.classes():
+            h = self._fp_for(r, identity)
+            if h: Bbk[h].append(r["id"])
+        # A side: substitute via mapping.
+        sub = lambda x: mapping.get(x)
+        for r in a.classes():
+            h = self._fp_for(r, sub)
+            if not h: continue
+            blst = Bbk.get(h)
+            if not blst: continue
+            conf = _specificity_confidence(0.85, 1, len(blst))
+            for bi in blst:
+                yield Candidate(r["id"], bi, conf, self.id,
+                                ("call_targets_sub", len(blst)))
+
+
+class FieldTargetMultiset:
+    """Multiset of stable-only (class, field-name) accesses. Same idea
+    as CallTargetMultiset for field reads/writes."""
+    id = "field_targets_ms"; tier = 2
+
+    def __init__(self, min_targets: int = 3):
+        self.min_targets = min_targets
+
+    def _fp_for(self, rec: dict) -> str | None:
+        ts = sorted({(c, f) for c, f in rec.get("field_targets", ())
+                     if not c.startswith("LX/")})
+        if len(ts) < self.min_targets:
+            return None
+        return _fp("ftm", ts)
+
+    def propose(self, a, b):
+        Bbk = defaultdict(list); Abk = defaultdict(list)
+        for r in b.classes():
+            h = self._fp_for(r)
+            if h: Bbk[h].append(r["id"])
+        for r in a.classes():
+            h = self._fp_for(r)
+            if h: Abk[h].append(r["id"])
+        for h, alst in Abk.items():
+            blst = Bbk.get(h)
+            if not blst: continue
+            conf = _specificity_confidence(0.85, len(alst), len(blst))
+            for ai in alst:
+                for bi in blst:
+                    yield Candidate(ai, bi, conf, self.id,
+                                    ("field_targets_ms", len(alst), len(blst)))
+
+
+class SiblingByMappedSuper:
+    """Tier-3 matcher for tiny classes that share a (post-mapping)
+    super and a structural shape.
+
+    For each A class C with super S_a:
+      * If S_a is in the stable namespace, S_b = S_a.
+      * Else look up `mapping.get(S_a)` — skip if unmapped.
+      * Bucket A and B classes by (S_b, nm, nf, ns, mods, sorted(impls_b)).
+      * Whenever the bucket has exactly one A and exactly one B class,
+        propose them as a candidate.
+
+    Catches the lambdas / synthetic / data-carrier classes that have
+    no strings but share an inheritance + shape fingerprint with
+    their sibling on the other side.
+    """
+    id = "sibling_super"; tier = 3
+
+    def _impls_substituted(self, cls: dict, mapping) -> list[str]:
+        out = []
+        for x in cls.get("impls", ()):
+            if not x.startswith("LX/"):
+                out.append(x)
+            else:
+                m = mapping.get(x)
+                out.append(m or "?")
+        return sorted(out)
+
+    def _mapped_super(self, cls: dict, mapping) -> str | None:
+        s = cls.get("super")
+        if not s or s == "Ljava/lang/Object;":
+            return None
+        if not s.startswith("LX/"):
+            return s
+        return mapping.get(s)
+
+    def propose(self, a, b, mapping):
+        # Build B index keyed by (super_b, nm, nf, ns, sorted_impls_b, mods)
+        Bidx = defaultdict(list)
+        for r in b.classes():
+            sb = r.get("super")
+            if not sb or sb == "Ljava/lang/Object;":
+                continue
+            key = (sb, r["nm"], r["nf"], r["ns"], r["nn"],
+                   tuple(sorted(r["impls"])), tuple(r["mods"]))
+            Bidx[key].append(r["id"])
+        for r in a.classes():
+            sa_mapped = self._mapped_super(r, mapping)
+            if sa_mapped is None:
+                continue
+            key = (sa_mapped, r["nm"], r["nf"], r["ns"], r["nn"],
+                   tuple(self._impls_substituted(r, mapping)),
+                   tuple(r["mods"]))
+            blst = Bidx.get(key)
+            if not blst or len(blst) != 1:
+                continue
+            # Skip giant buckets — must be unique on A side too
+            yield Candidate(r["id"], blst[0], 0.7, self.id, ("sibling_super",))
+
+
 DEFAULT_MATCHERS = [
     # ---- Tier 1: anchors, lockable ------------------------------------
-    FQNStable(),             # non-LX FQN identity
-    NativeSymbolSet(),       # JNI symbol set
-    IdenticalStrings(),      # large identical string set
-    LongUniqueString(),      # any string >= 20 chars unique on both sides
+    FQNStable(),
+    NativeSymbolSet(),
+    IdenticalStrings(),
+    LongUniqueString(),
 
     # ---- Tier 2: content fingerprints ---------------------------------
-    UniqueString(),          # globally unique string (any length >= 6)
-    StringPair(),            # 2+ strings >= 8 chars
-    StringSetHash(),         # any string-set match
-    StringsPlusStableRefs(), # strings + non-LX refs
-    StableRefsMultiset(),    # non-LX refs alone
+    UniqueString(),
+    StringPair(),
+    StringSetHash(),
+    StringsPlusStableRefs(),
+    StableRefsMultiset(),
+    CallTargetMultiset(min_targets=4),   # NEW: who-calls-which-method
+    FieldTargetMultiset(min_targets=3),  # NEW: who-touches-which-field
 
     # ---- Tier 3: propagation, iterated --------------------------------
-    NeighbourVote(min_votes=4),
+    WeightedNeighbourVote(min_votes=6),
+    BodyHashSubstituted(),
+    CallTargetWithSubstitution(min_targets=6),  # NEW: substituted call-targets
+    SiblingByMappedSuper(),
 ]
