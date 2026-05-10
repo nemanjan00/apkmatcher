@@ -120,7 +120,8 @@ since non-LX classes are free anchors that round-trip by FQN.
 | + LineRefMultiset (per-line stable refs) | 72.6 % | 69.3 % | 69.4 % | 99.2 % | 77.4 % | 14354 | 0.809 | 410 s |
 | + negative cache (revoked pairs not re-proposable) | 72.6 % | 69.4 % | 69.4 % | 99.2 % | 77.4 % | 14365 | 0.809 | 127 s |
 | + sibling_loose + WeightedNeighbourVote n=4 + n=2 | 72.7 % | 69.9 % | 69.9 % | 99.2 % | 77.4 % | 14790 | 0.811 | 152 s |
-| + LockStep n=2, ReverseLockStep n=2, ImplementedBy n=2 | **76.6 %** | **73.9 %** | **70.6 %** | 99.1 % | **78.4 %** | **15481** | **0.819** | 185 s |
+| + LockStep n=2, ReverseLockStep n=2, ImplementedBy n=2 | 76.6 % | 73.9 % | 70.6 % | 99.1 % | 78.4 % | 15481 | 0.819 | 185 s |
+| + n=1 LockStep variants (single mapped neighbour) | **81.4 %** | **79.2 %** | **75.7 %** | 99.1 % | **78.8 %** | **16795** | **0.830** | 228 s |
 
 ## Status
 
