@@ -116,7 +116,9 @@ since non-LX classes are free anchors that round-trip by FQN.
 | + ReverseLockStep + tier3_max_iters=20 | 71.7 % | — | 68.7 % | 99.2 % | 76.8 % | 10373 | 0.805 | 235 s |
 | + MethodCallSetSubstituted (per-method index) | 71.9 % | 68.6 % | 68.8 % | 99.2 % | 77.3 % | 13387 | 0.807 | 396 s |
 | + ExtendedByLockStep + ImplementedByLockStep | 72.7 % | 69.5 % | 69.5 % | 99.2 % | 77.4 % | 13484 | 0.809 | 403 s |
-| + resource-id resolves to literal string value (was apktool placeholder) | **72.6 %** | 69.4 % | 69.5 % | 99.2 % | **77.4 %** | **14152** | **0.809** | 407 s |
+| + resource-id resolves to literal string value (was apktool placeholder) | 72.6 % | 69.4 % | 69.5 % | 99.2 % | 77.4 % | 14152 | 0.809 | 407 s |
+| + LineRefMultiset (per-line stable refs) | 72.6 % | 69.3 % | 69.4 % | 99.2 % | 77.4 % | 14354 | 0.809 | 410 s |
+| + negative cache (revoked pairs not re-proposable) | **72.6 %** | 69.4 % | 69.4 % | 99.2 % | 77.4 % | 14365 | **0.809** | **127 s** |
 
 ## Status
 

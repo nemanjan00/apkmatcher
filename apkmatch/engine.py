@@ -173,11 +173,14 @@ class Engine:
             if prov:
                 provisional += 1
             if conf == 0.0 and not self.mapping.is_locked(a):
-                # Hard veto from at least one validator.
+                # Hard veto from at least one validator. Revoke and
+                # blacklist so the same pair isn't re-proposed in
+                # later iterations.
                 self.mapping._a2b.pop(a, None)
                 self.mapping._b2a.pop(b, None)
                 self.mapping._conf.pop(a, None)
                 self.mapping._matchers.pop((a, b), None)
+                self.mapping.mark_negative(a, b)
                 revoked += 1
                 continue
             if not prov and conf > cur_conf:

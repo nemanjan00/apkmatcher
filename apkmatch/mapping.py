@@ -33,6 +33,10 @@ class MutableMapping:
         self._conf: dict[str, float] = {}
         self._locked: set[str] = set()
         self._matchers: dict[tuple[str, str], list[str]] = {}
+        # Hard negatives: pairs the engine has revoked via veto are
+        # NOT re-acceptable unless a tier-1 matcher (lockable)
+        # proposes them. Stops the revoke-then-re-add oscillation.
+        self._negative: set[tuple[str, str]] = set()
         self._epoch = 0
         self._churn = EpochChurn(epoch=0)
 
@@ -72,10 +76,14 @@ class MutableMapping:
     def propose(self, a: str, b: str, confidence: float,
                 matcher_ids: list[str], lock: bool = False) -> str:
         """Returns the outcome: 'added' / 'updated' / 'displaced' /
-        'rejected' / 'locked-blocked'."""
+        'rejected' / 'locked-blocked' / 'negative'."""
         cur_b = self._a2b.get(a)
         cur_b_owner = self._b2a.get(b)
 
+        # Tier-1 lockable matchers can override negative cache;
+        # everyone else is bound by it.
+        if (a, b) in self._negative and not lock:
+            return "negative"
         if a in self._locked and cur_b != b:
             return "locked-blocked"
         if cur_b_owner and cur_b_owner != a and cur_b_owner in self._locked:
@@ -111,6 +119,9 @@ class MutableMapping:
         if lock:
             self._locked.add(a)
         return "added" if cur_b is None and cur_b_owner is None else "displaced"
+
+    def mark_negative(self, a: str, b: str) -> None:
+        self._negative.add((a, b))
 
     def matchers_for(self, a: str, b: str) -> list[str]:
         return list(self._matchers.get((a, b), []))
