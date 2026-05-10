@@ -61,6 +61,7 @@ def _build_result(eng: Engine, run, t_load: float, t_run: float):
             "run_seconds": round(t_run, 2),
         },
         "matcher_stats": run.matcher_stats,
+        "validator_stats": run.validator_stats or {},
         "mapping": mapping,
     }
 
