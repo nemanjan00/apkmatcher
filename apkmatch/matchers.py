@@ -729,11 +729,12 @@ class JaccardStrings:
     `min_overlap` shared distinct strings. Confidence scales with
     Jaccard.
     """
-    id = "jaccard_strings"; tier = 2
+    tier = 2
 
     def __init__(self, min_jaccard: float = 0.7, min_overlap: int = 3):
         self.min_jaccard = min_jaccard
         self.min_overlap = min_overlap
+        self.id = f"jaccard_strings_j{int(min_jaccard*10)}_o{min_overlap}"
 
     def propose(self, a, b):
         # Candidate-set generation: for each A class with >= min_overlap
@@ -813,6 +814,83 @@ class ExtendedByLockStep:
             conf = min(0.85 + 0.03 * len(mapped_children), 0.97)
             yield Candidate(cid, bsuper, conf, self.id,
                             ("extended_by", len(mapped_children)))
+
+
+class DisambiguatingLockStep:
+    """Tier-3, fallback when LockStep's intersection has 2-N candidates.
+
+    Plain LockStep requires the intersection of B-side reverse-neighbour
+    sets to have exactly one unmatched element. When the intersection is
+    small (2..max_set), we can ask: which of those candidates has the
+    best content match against the A class?
+
+    Lower confidence than strict LockStep because we're picking a
+    winner instead of finding a forced match. Conservative content
+    threshold (>= 0.6) and a strict margin requirement (best > second
+    + 0.1) means at-most-one weak candidate ever fires.
+    """
+    tier = 3
+
+    def __init__(self, min_mapped: int = 3, max_set: int = 5,
+                 min_score: float = 0.6, min_margin: float = 0.1):
+        self.min_mapped = min_mapped
+        self.max_set = max_set
+        self.min_score = min_score
+        self.min_margin = min_margin
+        self.id = f"disambig_lockstep_n{min_mapped}"
+
+    def propose(self, a, b, mapping):
+        rev_cache: dict[str, set] = {}
+        def rev(bt: str) -> set:
+            r = rev_cache.get(bt)
+            if r is None:
+                r = set(b.reverse_neighbours(bt))
+                rev_cache[bt] = r
+            return r
+
+        for cid in a.ids():
+            if mapping.get(cid) is not None: continue
+            ra = a.get(cid)
+            seen = set(); mapped_targets = []
+            for nb in a.neighbours(cid):
+                if nb in seen: continue
+                seen.add(nb)
+                mb = mapping.get(nb)
+                if mb is not None:
+                    mapped_targets.append(mb)
+            if len(mapped_targets) < self.min_mapped:
+                continue
+
+            seed_set = None; seed_target = None
+            for bt in mapped_targets:
+                rs = rev(bt)
+                if not rs or len(rs) > 500: continue
+                if seed_set is None or len(rs) < len(seed_set):
+                    seed_set = rs; seed_target = bt
+            if seed_set is None: continue
+            cands = set(seed_set)
+            for bt in mapped_targets:
+                if bt == seed_target: continue
+                cands &= rev(bt)
+                if not cands: break
+            cands = {x for x in cands if mapping.inverse(x) is None}
+            if len(cands) < 2 or len(cands) > self.max_set:
+                continue
+
+            scored = []
+            for bcid in cands:
+                rb = b.get(bcid)
+                if rb is None: continue
+                s = _content_score(ra, rb, mapping)
+                scored.append((s, bcid))
+            scored.sort(reverse=True)
+            if len(scored) < 2: continue
+            top_s, top_b = scored[0]
+            second_s = scored[1][0]
+            if top_s < self.min_score: continue
+            if top_s - second_s < self.min_margin: continue
+            yield Candidate(cid, top_b, 0.65 + (top_s - second_s) * 0.5,
+                            self.id, ("disambig", round(top_s, 2)))
 
 
 class ImplementedByLockStep:
@@ -931,6 +1009,53 @@ class ReverseLockStep:
             conf = min(0.85 + 0.02 * len(mapped_b_sources), 0.97)
             yield Candidate(cid, bcid, conf, self.id,
                             ("reverse_lockstep", len(mapped_b_sources)))
+
+
+def _content_score(ra: dict, rb: dict, mapping) -> float:
+    """Cheap pairwise compatibility: shape + string overlap + stable-ref
+    overlap + super agreement (after substitution). Range [0, 1]."""
+    score = 0.0
+    weight = 0.0
+
+    # Shape (modifier flags + counts)
+    sa = set(ra["mods"]); sb = set(rb["mods"])
+    for k in ("interface", "enum", "annotation", "abstract", "final"):
+        if (k in sa) == (k in sb):
+            score += 0.5
+        weight += 0.5
+    if ra["nm"] == rb["nm"]: score += 1.0
+    weight += 1.0
+    if ra["nf"] == rb["nf"]: score += 1.0
+    weight += 1.0
+
+    # String Jaccard
+    ssa = {s for s in ra["strings"] if len(s) >= 4}
+    ssb = {s for s in rb["strings"] if len(s) >= 4}
+    if ssa or ssb:
+        jac = len(ssa & ssb) / max(1, len(ssa | ssb))
+        score += 3.0 * jac
+        weight += 3.0
+
+    # Stable refs Jaccard
+    sta = {r for r in ra["calls"] + ra["facc"] + ra["trefs"]
+           if not r.startswith("LX/")}
+    stb = {r for r in rb["calls"] + rb["facc"] + rb["trefs"]
+           if not r.startswith("LX/")}
+    if sta or stb:
+        jac = len(sta & stb) / max(1, len(sta | stb))
+        score += 2.0 * jac
+        weight += 2.0
+
+    # Super agreement (after sub)
+    super_a = ra.get("super") or ""
+    super_b = rb.get("super") or ""
+    if super_a.startswith("LX/"):
+        super_a = mapping.get(super_a) or super_a
+    if super_a == super_b:
+        score += 1.5
+    weight += 1.5
+
+    return score / weight if weight else 0.0
 
 
 _LOCKSTEP_ID_FMT = "lockstep_n{}"
@@ -1209,6 +1334,7 @@ DEFAULT_MATCHERS = [
     LockStep(min_mapped=3),
     LockStep(min_mapped=2),
     LockStep(min_mapped=1),
+    DisambiguatingLockStep(min_mapped=3),
     ReverseLockStep(min_mapped=4),
     ReverseLockStep(min_mapped=3),
     ReverseLockStep(min_mapped=2),
