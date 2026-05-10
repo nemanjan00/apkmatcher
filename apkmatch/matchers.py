@@ -378,12 +378,13 @@ EDGE_WEIGHTS = {
 
 class WeightedNeighbourVote(NeighbourVote):
     """Neighbour vote with per-edge-kind weights."""
-    id = "neighbour_vote_w"; tier = 3
+    tier = 3
 
     def __init__(self, min_votes: int = 6, max_rev_b: int = 200,
                  weights: dict | None = None):
         super().__init__(min_votes=min_votes, max_rev_b=max_rev_b)
         self.weights = weights or EDGE_WEIGHTS
+        self.id = f"neighbour_vote_w_n{min_votes}"
 
     def propose(self, a, b, mapping):
         votes: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
@@ -1206,12 +1207,16 @@ DEFAULT_MATCHERS = [
     # ---- Tier 3: propagation, iterated --------------------------------
     LockStep(min_mapped=4),
     LockStep(min_mapped=3),
+    LockStep(min_mapped=2),
     ReverseLockStep(min_mapped=4),
     ReverseLockStep(min_mapped=3),
+    ReverseLockStep(min_mapped=2),
     ExtendedByLockStep(min_mapped=2),
     ImplementedByLockStep(min_mapped=3),
+    ImplementedByLockStep(min_mapped=2),
     MethodCallSetSubstituted(),
-    WeightedNeighbourVote(min_votes=6),
+    WeightedNeighbourVote(min_votes=4),
+    WeightedNeighbourVote(min_votes=2),  # Aggressive pass after others run
     BodyHashSubstituted(),
     CallTargetWithSubstitution(min_targets=6),
     SiblingByMappedSuper(),
