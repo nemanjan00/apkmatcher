@@ -601,6 +601,58 @@ class FieldTargetMultiset:
                                     ("field_targets_ms", len(alst), len(blst)))
 
 
+class JaccardStrings:
+    """Tier 2. Fuzzy match by Jaccard similarity over the string set.
+
+    Catches classes whose string content shifted slightly between
+    builds — a few new log messages added or one renamed — but the
+    bulk of the strings overlap. Inverted-index over individual
+    strings to find candidate pairs instead of brute force.
+
+    Conservative: requires Jaccard >= `min_jaccard` AND at least
+    `min_overlap` shared distinct strings. Confidence scales with
+    Jaccard.
+    """
+    id = "jaccard_strings"; tier = 2
+
+    def __init__(self, min_jaccard: float = 0.7, min_overlap: int = 3):
+        self.min_jaccard = min_jaccard
+        self.min_overlap = min_overlap
+
+    def propose(self, a, b):
+        # Candidate-set generation: for each A class with >= min_overlap
+        # strings, find B classes that share at least min_overlap of
+        # them. Use the inverted string index on B.
+        for ra in a.classes():
+            sa = {s for s in ra["strings"] if len(s) >= 4}
+            if len(sa) < self.min_overlap:
+                continue
+            counts: dict[str, int] = defaultdict(int)
+            for s in sa:
+                # Use B's classes_containing_string
+                for bid in b.classes_containing_string(s):
+                    counts[bid] += 1
+            # Keep only candidates with >= min_overlap shared
+            for bid, n in counts.items():
+                if n < self.min_overlap:
+                    continue
+                rb = b.get(bid)
+                if rb is None: continue
+                sb = {s for s in rb["strings"] if len(s) >= 4}
+                if not sb:
+                    continue
+                jac = n / len(sa | sb)
+                if jac < self.min_jaccard:
+                    continue
+                # Confidence: jaccard mapped from [min, 1] to [0.6, 0.92]
+                conf = 0.6 + 0.32 * (jac - self.min_jaccard) / (1 - self.min_jaccard)
+                yield Candidate(ra["id"], bid, conf, self.id,
+                                ("jaccard_strings", round(jac, 2), n))
+
+
+_LOCKSTEP_ID_FMT = "lockstep_n{}"
+
+
 class LockStep:
     """Tier-3, very high precision.
 
@@ -620,11 +672,12 @@ class LockStep:
     Conservative — emits at most one candidate per A class, only
     when the intersection is unambiguous.
     """
-    id = "lockstep"; tier = 3
+    tier = 3
 
     def __init__(self, min_mapped: int = 4, max_per_target: int = 500):
         self.min_mapped = min_mapped
         self.max_per_target = max_per_target
+        self.id = _LOCKSTEP_ID_FMT.format(min_mapped)
 
     def propose(self, a, b, mapping):
         # Cache reverse-neighbour sets — the same B target appears in
@@ -758,9 +811,11 @@ DEFAULT_MATCHERS = [
     CallTargetMultiset(min_targets=4),
     FieldTargetMultiset(min_targets=3),
     EnumValueNames(),
+    JaccardStrings(min_jaccard=0.7, min_overlap=3),
 
     # ---- Tier 3: propagation, iterated --------------------------------
     LockStep(min_mapped=4),
+    LockStep(min_mapped=3),  # Looser pass for tiny classes
     WeightedNeighbourVote(min_votes=6),
     BodyHashSubstituted(),
     CallTargetWithSubstitution(min_targets=6),
