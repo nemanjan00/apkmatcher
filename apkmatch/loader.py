@@ -197,6 +197,13 @@ def parse_class(path: str, bucket: str) -> dict | None:
     cur_facc: list[tuple[str, str]] = []
     cur_strings: list[str] = []
     cur_n_branches = 0
+    cur_line = 0
+    # (line, target_class) tuples — high-precision reference signal:
+    # when two classes touch the same target_class at the same source
+    # line, that's a strong same-class indicator (the source file
+    # didn't move that much). Stable-class-only because LX names
+    # rotate.
+    line_refs: list[tuple[int, str]] = []
 
     in_method = False
     cur_body: list[str] = []
@@ -234,6 +241,12 @@ def parse_class(path: str, bucket: str) -> dict | None:
                     strings.append(line[q1+1:q2])
                     cur_strings.append(line[q1+1:q2])
                 continue
+            if line.startswith(".line "):
+                try:
+                    cur_line = int(line.split()[1])
+                except (IndexError, ValueError):
+                    pass
+                continue
             if line.startswith(P_INVOKE):
                 arrow = line.find("->")
                 if arrow != -1:
@@ -247,6 +260,8 @@ def parse_class(path: str, bucket: str) -> dict | None:
                                 mname = line[arrow+2:paren]
                                 call_targets.append((cls, mname))
                                 cur_calls.append((cls, mname))
+                            if not cls.startswith("LX/") and cur_line:
+                                line_refs.append((cur_line, cls))
                 cur_body.append(_normalize_op(line))
                 continue
             if line[:4] in ("iget", "iput", "sget", "sput"):
@@ -361,7 +376,8 @@ def parse_class(path: str, bucket: str) -> dict | None:
         "native_syms": native_syms,
         "call_targets": call_targets,
         "field_targets": field_targets,
-        "methods": methods,  # per-method records (sig, calls, facc, strs, br, bh)
+        "methods": methods,
+        "line_refs": line_refs,  # list[(line_no, stable_class_ref)]
     }
 
 

@@ -676,6 +676,46 @@ class MethodCallSetSubstituted:
                                 ("method_callset_sub", len(blst)))
 
 
+class LineRefMultiset:
+    """Tier 2. Per the source-line invariant: when a class invokes a
+    stable framework class at a specific line in the source file,
+    both builds of that class do it at (roughly) the same line.
+
+    Fingerprint = multiset of (source_line, stable_target_class)
+    tuples. Restricted to stable targets because LX names rotate.
+
+    High precision when fingerprint size >= `min_refs`. Specificity
+    scaling deals with classes that share boilerplate line-refs.
+    """
+    id = "line_refs_ms"; tier = 2
+
+    def __init__(self, min_refs: int = 4):
+        self.min_refs = min_refs
+
+    def _fp(self, rec: dict) -> str | None:
+        refs = sorted(set(map(tuple, rec.get("line_refs", ()))))
+        if len(refs) < self.min_refs:
+            return None
+        return _fp("lrm", refs)
+
+    def propose(self, a, b):
+        Bidx = defaultdict(list); Aidx = defaultdict(list)
+        for r in b.classes():
+            h = self._fp(r)
+            if h: Bidx[h].append(r["id"])
+        for r in a.classes():
+            h = self._fp(r)
+            if h: Aidx[h].append(r["id"])
+        for h, alst in Aidx.items():
+            blst = Bidx.get(h)
+            if not blst: continue
+            conf = _specificity_confidence(0.92, len(alst), len(blst))
+            for ai in alst:
+                for bi in blst:
+                    yield Candidate(ai, bi, conf, self.id,
+                                    ("line_refs", len(alst), len(blst)))
+
+
 class JaccardStrings:
     """Tier 2. Fuzzy match by Jaccard similarity over the string set.
 
@@ -1100,6 +1140,7 @@ DEFAULT_MATCHERS = [
     FieldTargetMultiset(min_targets=3),
     EnumValueNames(),
     JaccardStrings(min_jaccard=0.7, min_overlap=3),
+    LineRefMultiset(min_refs=4),
 
     # ---- Tier 3: propagation, iterated --------------------------------
     LockStep(min_mapped=4),
