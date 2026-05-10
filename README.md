@@ -108,7 +108,8 @@ regressions are catchable in `git log`. Baseline on Instagram
 | + call-target / field-target multisets w/ specificity scoring | 63.9 % | 61.1 % | 99.4 % | 75.3 % | 9082 | 0.786 | 46 s |
 | + neighbours()/reverse_neighbours() bug fix (yield+return) | 66.4 % | 63.6 % | 99.2 % | 73.1 % | 9770 | 0.785 | 51 s |
 | + EnumValueNames (tier 2) + LockStep (tier 3) | 67.0 % | 64.1 % | 99.2 % | 73.4 % | 9949 | 0.787 | 52 s |
-| + JaccardStrings (tier 2) + looser LockStep n=3 | **67.7 %** | **64.7 %** | 99.2 % | 74.1 % | **10340** | **0.790** | 69 s |
+| + JaccardStrings (tier 2) + looser LockStep n=3 | 67.7 % | 64.7 % | 99.2 % | 74.1 % | 10340 | 0.790 | 69 s |
+| + ReverseLockStep + tier3_max_iters=20 | **71.7 %** | **68.7 %** | 99.2 % | **76.8 %** | 10373 | **0.805** | 235 s |
 
 ## Status
 

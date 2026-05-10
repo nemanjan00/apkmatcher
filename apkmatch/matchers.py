@@ -650,6 +650,80 @@ class JaccardStrings:
                                 ("jaccard_strings", round(jac, 2), n))
 
 
+class ReverseLockStep:
+    """Tier-3, mirrors LockStep but uses INCOMING edges.
+
+    For each unmatched A class C, look at A.reverse_neighbours(C) —
+    the classes that reference C. Among those that are mapped, get
+    their B-side images. Each such image references some B classes;
+    the *intersection* of those reference sets is the set of B
+    classes referenced by every B-side analogue of C's references.
+    If exactly one unmatched B class is in that intersection, it's
+    C's match.
+
+    This is the dual of LockStep — useful for marker interfaces,
+    listener types, abstract bases that have many implementors but
+    few outgoing edges of their own.
+    """
+    tier = 3
+
+    def __init__(self, min_mapped: int = 4, max_per_source: int = 500):
+        self.min_mapped = min_mapped
+        self.max_per_source = max_per_source
+        self.id = f"reverse_lockstep_n{min_mapped}"
+
+    def propose(self, a, b, mapping):
+        fwd_cache: dict[str, set] = {}
+        def fwd(bs: str) -> set:
+            r = fwd_cache.get(bs)
+            if r is None:
+                r = set(b.neighbours(bs))
+                fwd_cache[bs] = r
+            return r
+
+        for cid in a.ids():
+            if mapping.get(cid) is not None:
+                continue
+            seen = set()
+            mapped_b_sources: list[str] = []
+            for nb in a.reverse_neighbours(cid):
+                if nb in seen:
+                    continue
+                seen.add(nb)
+                mb = mapping.get(nb)
+                if mb is not None:
+                    mapped_b_sources.append(mb)
+            if len(mapped_b_sources) < self.min_mapped:
+                continue
+
+            seed_source = None; seed_set = None
+            for bs in mapped_b_sources:
+                fs = fwd(bs)
+                if not fs or len(fs) > self.max_per_source:
+                    continue
+                if seed_set is None or len(fs) < len(seed_set):
+                    seed_set = fs; seed_source = bs
+            if seed_set is None:
+                continue
+            cands = set(seed_set)
+            for bs in mapped_b_sources:
+                if bs == seed_source:
+                    continue
+                fs = fwd(bs)
+                if not fs:
+                    continue
+                cands &= fs
+                if not cands:
+                    break
+            cands = {x for x in cands if mapping.inverse(x) is None}
+            if len(cands) != 1:
+                continue
+            (bcid,) = cands
+            conf = min(0.85 + 0.02 * len(mapped_b_sources), 0.97)
+            yield Candidate(cid, bcid, conf, self.id,
+                            ("reverse_lockstep", len(mapped_b_sources)))
+
+
 _LOCKSTEP_ID_FMT = "lockstep_n{}"
 
 
@@ -815,7 +889,9 @@ DEFAULT_MATCHERS = [
 
     # ---- Tier 3: propagation, iterated --------------------------------
     LockStep(min_mapped=4),
-    LockStep(min_mapped=3),  # Looser pass for tiny classes
+    LockStep(min_mapped=3),
+    ReverseLockStep(min_mapped=4),
+    ReverseLockStep(min_mapped=3),
     WeightedNeighbourVote(min_votes=6),
     BodyHashSubstituted(),
     CallTargetWithSubstitution(min_targets=6),
