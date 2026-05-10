@@ -199,9 +199,18 @@ parse APK B → graph B ─┘                                       │
                   final mapping (old → new, with confidence + provenance)
 ```
 
-The mapping is monotonic within a run — once a pair is confirmed above a
-confidence threshold it isn't unconfirmed. (Conflicts are resolved at
-candidate time, before confirmation, by the validator scoring.)
+**The mapping is NOT monotonic across epochs.** A pair confirmed at
+epoch N may be displaced at epoch N+1 if a competing candidate's
+confidence exceeds it by at least the engine's displacement margin
+(`MutableMapping.displace_margin`, default 0.1). Tier-1 anchors are
+locked at insertion (`MutableMapping._locked`) and are immune to
+displacement and to validator hard vetoes.
+
+Within a single epoch the mapping is stable — queries are consistent
+and the engine guarantees no mid-epoch flips. (An earlier draft of
+this spec said "monotonic within a run"; the implementation diverged
+intentionally to allow tier-3 propagation to correct earlier
+mistakes. The engine is canonical.)
 
 ## Data model
 

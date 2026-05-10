@@ -411,6 +411,59 @@ class WeightedNeighbourVote(NeighbourVote):
                             ("nv_w", top_v, second))
 
 
+class EnumValueNames:
+    """For `enum` classes, match by the multiset of enum value names.
+
+    Enums in Java keep their `name()` strings (used by reflection,
+    JSON serialization, equals checks). Even when the class name
+    rotates, an enum's value names like ['MAIN', 'CRITICAL_REPORT']
+    are preserved verbatim across builds. The full multiset of
+    value names is essentially a unique class fingerprint.
+
+    Heuristic: a string in an enum's `strings` is likely a value
+    name iff it's identifier-shaped (no spaces, no '/', no '.',
+    no '%') and at least 2 chars. We don't need to identify
+    value-name strings perfectly — even with some log/format
+    strings mixed in, the SET equality test is still very
+    discriminating because the rest of B's enums are different.
+    """
+    id = "enum_value_names"; tier = 2
+
+    @staticmethod
+    def _is_namelike(s: str) -> bool:
+        if not s or len(s) < 2:
+            return False
+        if any(c in s for c in " /\\.%\"\n\t,:?"):
+            return False
+        return True
+
+    def _fp_for(self, rec: dict) -> str | None:
+        if "enum" not in rec.get("mods", ()):
+            return None
+        names = sorted({s for s in rec["strings"] if self._is_namelike(s)})
+        if len(names) < 2:
+            return None
+        return _fp("env", names)
+
+    def propose(self, a, b):
+        Bbk = defaultdict(list); Abk = defaultdict(list)
+        for r in b.classes():
+            h = self._fp_for(r)
+            if h: Bbk[h].append(r["id"])
+        for r in a.classes():
+            h = self._fp_for(r)
+            if h: Abk[h].append(r["id"])
+        for h, alst in Abk.items():
+            blst = Bbk.get(h)
+            if not blst:
+                continue
+            conf = _specificity_confidence(0.95, len(alst), len(blst), 0.97)
+            for ai in alst:
+                for bi in blst:
+                    yield Candidate(ai, bi, conf, self.id,
+                                    ("enum_values", len(alst), len(blst)))
+
+
 def _specificity_confidence(base: float, n_a: int, n_b: int,
                             ceiling: float = 0.95) -> float:
     """Confidence as a function of bucket size on each side.
@@ -548,6 +601,88 @@ class FieldTargetMultiset:
                                     ("field_targets_ms", len(alst), len(blst)))
 
 
+class LockStep:
+    """Tier-3, very high precision.
+
+    For each unmatched A class C with `min_mapped` or more
+    *unique* mapped forward neighbours:
+      * Compute the multiset of B-side images of those neighbours.
+      * For each B-side image, gather B's reverse-neighbours.
+      * The intersection across all those reverse-neighbour sets
+        is the set of B classes that reference EVERY one of C's
+        mapped neighbours' images.
+      * If the intersection contains exactly one unmatched B class,
+        that class is C's match (lock-step constraint satisfied:
+        all but possibly one outgoing edge agrees).
+
+    This is the spec's "lock-step" propagation: when most of a
+    class's neighbours are pinned, the class itself is pinned.
+    Conservative — emits at most one candidate per A class, only
+    when the intersection is unambiguous.
+    """
+    id = "lockstep"; tier = 3
+
+    def __init__(self, min_mapped: int = 4, max_per_target: int = 500):
+        self.min_mapped = min_mapped
+        self.max_per_target = max_per_target
+
+    def propose(self, a, b, mapping):
+        # Cache reverse-neighbour sets — the same B target appears in
+        # many A classes' neighbour lists; recomputing is the cost.
+        rev_cache: dict[str, set] = {}
+        def rev(bt: str) -> set:
+            r = rev_cache.get(bt)
+            if r is None:
+                r = set(b.reverse_neighbours(bt))
+                rev_cache[bt] = r
+            return r
+
+        for cid in a.ids():
+            if mapping.get(cid) is not None:
+                continue
+            seen = set()
+            mapped_b_targets: list[str] = []
+            for nb in a.neighbours(cid):
+                if nb in seen:
+                    continue
+                seen.add(nb)
+                mb = mapping.get(nb)
+                if mb is not None:
+                    mapped_b_targets.append(mb)
+            if len(mapped_b_targets) < self.min_mapped:
+                continue
+
+            # Start with the smallest reverse-neighbour set as the seed.
+            seed_target = None
+            seed_set = None
+            for bt in mapped_b_targets:
+                rs = rev(bt)
+                if not rs or len(rs) > self.max_per_target:
+                    continue
+                if seed_set is None or len(rs) < len(seed_set):
+                    seed_set = rs
+                    seed_target = bt
+            if seed_set is None:
+                continue
+            cands = set(seed_set)
+            for bt in mapped_b_targets:
+                if bt == seed_target:
+                    continue
+                rs = rev(bt)
+                if not rs:
+                    continue
+                cands &= rs
+                if not cands:
+                    break
+            cands = {x for x in cands if mapping.inverse(x) is None}
+            if len(cands) != 1:
+                continue
+            (bcid,) = cands
+            conf = min(0.85 + 0.02 * len(mapped_b_targets), 0.97)
+            yield Candidate(cid, bcid, conf, self.id,
+                            ("lockstep", len(mapped_b_targets)))
+
+
 class SiblingByMappedSuper:
     """Tier-3 matcher for tiny classes that share a (post-mapping)
     super and a structural shape.
@@ -620,12 +755,14 @@ DEFAULT_MATCHERS = [
     StringSetHash(),
     StringsPlusStableRefs(),
     StableRefsMultiset(),
-    CallTargetMultiset(min_targets=4),   # NEW: who-calls-which-method
-    FieldTargetMultiset(min_targets=3),  # NEW: who-touches-which-field
+    CallTargetMultiset(min_targets=4),
+    FieldTargetMultiset(min_targets=3),
+    EnumValueNames(),
 
     # ---- Tier 3: propagation, iterated --------------------------------
+    LockStep(min_mapped=4),
     WeightedNeighbourVote(min_votes=6),
     BodyHashSubstituted(),
-    CallTargetWithSubstitution(min_targets=6),  # NEW: substituted call-targets
+    CallTargetWithSubstitution(min_targets=6),
     SiblingByMappedSuper(),
 ]
