@@ -1305,6 +1305,126 @@ class LineRefMultiset:
                                     ("line_refs", len(alst), len(blst)))
 
 
+def _source_files_from_strings(rec: dict) -> set[str]:
+    """Extract source-file identifiers from a class's literal strings.
+    Many Kotlin (especially Compose) classes embed strings like
+    `com.foo.Bar$baz (Bar.kt:42)` whose source filename is preserved
+    across builds even when class names rotate. We grab the bare
+    filename including the dot extension.
+    """
+    out = set()
+    for s in rec.get("strings", ()):
+        # Look for `(Something.kt:N)` or `(Something.java:N)` style.
+        lp = s.rfind("(")
+        if lp == -1: continue
+        rp = s.find(")", lp + 1)
+        if rp == -1: continue
+        inner = s[lp+1:rp]
+        # Strip ":\d+" suffix
+        col = inner.rfind(":")
+        if col != -1 and inner[col+1:].isdigit():
+            inner = inner[:col]
+        # Must look like a filename with .kt / .java / .scala
+        if inner.endswith(".kt") or inner.endswith(".java") or inner.endswith(".scala"):
+            out.add(inner)
+    return out
+
+
+import re
+
+_COMPOSE_FQN_RE = re.compile(
+    r'\b((?:com|org|net|io|androidx|kotlin|java|javax)\.[a-zA-Z][\w.$]*[\w$])(?=\s*\()'
+)
+
+
+def _deobfuscated_fqns_from_strings(rec: dict) -> set[str]:
+    """Pull dotted class names out of literal strings — Kotlin/Compose
+    embeds them in stack-trace / debug-metadata strings like
+    `com.instagram.foo.Bar (Bar.kt:42)`. The class name is the
+    original (pre-obfuscation) identifier, which is preserved
+    across builds.
+    """
+    out = set()
+    for s in rec.get("strings", ()):
+        for m in _COMPOSE_FQN_RE.finditer(s):
+            out.add(m.group(1))
+    return out
+
+
+class DeobfuscatedFQNFingerprint:
+    """Tier-1 anchor. Match by the SET of de-obfuscated FQNs embedded
+    in a class's literal strings.
+
+    Kotlin Compose decompiler-friendly stack strings like
+    `com.instagram.foo.Bar (Bar.kt:42)` retain the original class
+    identifier. If A class C contains the same set of dotted FQNs
+    as B class C', they are essentially the same logical class.
+
+    High-precision (single shared FQN is usually enough); we require
+    at least one extracted FQN and match by set equality.
+    """
+    id = "deobf_fqn"; tier = 1
+
+    def _fp(self, rec: dict) -> str | None:
+        fqns = _deobfuscated_fqns_from_strings(rec)
+        if not fqns: return None
+        return _fp("dfqn", tuple(sorted(fqns)))
+
+    def propose(self, a, b):
+        Bidx = defaultdict(list)
+        for r in b.classes():
+            h = self._fp(r)
+            if h: Bidx[h].append(r["id"])
+        for r in a.classes():
+            h = self._fp(r)
+            if not h: continue
+            blst = Bidx.get(h)
+            if not blst: continue
+            conf = _specificity_confidence(0.95, 1, len(blst), 0.97)
+            for bid in blst:
+                yield Candidate(r["id"], bid, conf, self.id,
+                                ("deobf_fqn", len(blst)))
+
+
+class SourceFileFingerprint:
+    """Tier-2 anchor. Group classes by the set of source filenames
+    extracted from their string literals (Kotlin Compose stack-trace-
+    style strings). Source filenames don't rotate across R8 builds.
+
+    Within each source-file bucket, propose pairs that ALSO share
+    super (after substitution) — even though source filenames are
+    preserved, multiple classes share the same file, so we need a
+    second-level discriminator.
+    """
+    id = "source_file_fp"; tier = 2
+
+    def __init__(self, min_files: int = 1):
+        self.min_files = min_files
+
+    def _fp(self, rec: dict) -> str | None:
+        files = _source_files_from_strings(rec)
+        if len(files) < self.min_files: return None
+        return _fp("srcf", tuple(sorted(files)), rec.get("super") or "",
+                   rec["nm"], rec["nf"], tuple(rec["mods"]))
+
+    def propose(self, a, b):
+        Bidx = defaultdict(list); Aidx = defaultdict(list)
+        for r in b.classes():
+            h = self._fp(r)
+            if h: Bidx[h].append(r["id"])
+        for r in a.classes():
+            h = self._fp(r)
+            if h: Aidx[h].append(r["id"])
+        for h, alst in Aidx.items():
+            blst = Bidx.get(h)
+            if not blst: continue
+            conf = _specificity_confidence(0.92, len(alst), len(blst))
+            for ai in alst:
+                for bi in blst:
+                    yield Candidate(ai, bi, conf, self.id,
+                                    ("source_file_fp", len(alst), len(blst)))
+
+
 class JaccardStrings:
     """Tier 2. Fuzzy match by Jaccard similarity over the string set.
 
@@ -2368,6 +2488,7 @@ DEFAULT_MATCHERS = [
     NativeSymbolSet(),
     IdenticalStrings(),
     LongUniqueString(),
+    DeobfuscatedFQNFingerprint(),
 
     # ---- Tier 2: content fingerprints ---------------------------------
     UniqueString(),
@@ -2382,6 +2503,7 @@ DEFAULT_MATCHERS = [
     AnonBodyHashMultiset(min_methods=2),
     AnonBodyHashJaccard(min_methods=5, min_jaccard=0.85),
     AnonBodyHashJaccard(min_methods=3, min_jaccard=0.95),
+    SourceFileFingerprint(min_files=1),
     # 2-method exact pass tried — regressed neighbour consistency
     # without coverage win; multiset matcher already covers exacts.
     # AnonBodyHashJaccard tried but caused slight regression — fuzzy
