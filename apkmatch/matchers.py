@@ -1787,6 +1787,41 @@ class MappedNeighbourFingerprint:
                                 ("mapped_nb_fp", len(blst)))
 
 
+class AnnsPositionLXVote:
+    """Tier-3. For each confirmed class pair, walk anns list
+    position-by-position. Vote LX_a -> LX_b for same-position
+    unmapped LX annotations. Annotation declaration order on
+    a class is usually preserved across builds.
+    """
+    id = "anns_position_lx_vote"; tier = 3
+
+    def __init__(self, min_votes: int = 2, min_margin: int = 1):
+        self.min_votes = min_votes
+        self.min_margin = min_margin
+
+    def propose(self, a, b, mapping):
+        votes: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        for a_cid, b_cid in mapping:
+            ra = a.get(a_cid); rb = b.get(b_cid)
+            if not ra or not rb: continue
+            aa = ra.get("anns", ()); ba = rb.get("anns", ())
+            if len(aa) != len(ba) or not aa: continue
+            for at, bt in zip(aa, ba):
+                if not at.startswith("LX/") or not bt.startswith("LX/"): continue
+                if mapping.get(at) is not None: continue
+                if mapping.inverse(bt) is not None: continue
+                votes[at][bt] += 1
+        for a_cid, vmap in votes.items():
+            if not vmap: continue
+            top_b, top_v = max(vmap.items(), key=lambda kv: kv[1])
+            if top_v < self.min_votes: continue
+            second = max((v for k, v in vmap.items() if k != top_b), default=0)
+            if top_v - second < self.min_margin: continue
+            conf = min(0.7 + 0.05 * (top_v - second), 0.93)
+            yield Candidate(a_cid, top_b, conf, self.id,
+                            ("anns_position_lx", top_v, second))
+
+
 class SuperLXVote:
     """Tier-3. For each confirmed class pair, if A's super is an
     unmapped LX ref and B's super is an unmapped LX ref, vote
@@ -2115,7 +2150,7 @@ class MethodWalk:
                             if not blist: continue
                             if len(alist) == 1 and len(blist) == 1:
                                 votes[alist[0]][blist[0]] += 1
-                        if len(a_lx_full) == len(b_lx_full) and len(a_lx_full) <= 8:
+                        if len(a_lx_full) == len(b_lx_full):
                             for (acls, asg), (bcls, bsg) in zip(a_lx_full, b_lx_full):
                                 if asg == bsg:
                                     votes[acls][bcls] += 1
@@ -2136,7 +2171,7 @@ class MethodWalk:
                             if not blist: continue
                             if len(alist) == 1 and len(blist) == 1:
                                 votes[alist[0]][blist[0]] += 1
-                        if len(a_lx) == len(b_lx) and len(a_lx) <= 8:
+                        if len(a_lx) == len(b_lx):
                             for (acls, anm), (bcls, bnm) in zip(a_lx, b_lx):
                                 if anm == bnm:
                                     votes[acls][bcls] += 1
@@ -2757,6 +2792,7 @@ DEFAULT_MATCHERS = [
     FieldPositionLXVote(min_votes=2, min_margin=1),
     ImplsPositionLXVote(min_votes=2, min_margin=1),
     SuperLXVote(min_votes=2, min_margin=1),
+    AnnsPositionLXVote(min_votes=2, min_margin=1),
     ReverseLockStep(min_mapped=4),
     ReverseLockStep(min_mapped=3),
     ReverseLockStep(min_mapped=2),
