@@ -404,6 +404,22 @@ class Engine:
             if revoked == 0:
                 break
 
+        # Third tier-3 sweep after final cleanup.
+        if tiers.get(3):
+            _log(f"=== final tier-3 sweep (after all cleanups) ===")
+            for it in range(3):
+                _log(f"--- final iter {it+1} ---")
+                total_churn = 0
+                for m in tiers[3]:
+                    churn = self._run_matcher(m, mapping_arg=True)
+                    total_churn += (churn.confirmed_added
+                                    + churn.confirmed_removed
+                                    + churn.confirmed_changed)
+                if self.validators:
+                    self._validate_all(f"final-tier3-iter{it+1}")
+                if total_churn < self.tier3_min_churn:
+                    break
+
         return RunResult(
             epochs=self.mapping.epoch,
             converged=converged,
