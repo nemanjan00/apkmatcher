@@ -766,11 +766,12 @@ class AnonBodyHashJaccard:
     added or refactored) but whose remaining bodies still match.
     Inverted-index seeded by per-bha lookup, not brute force.
     """
-    id = "anon_body_jac"; tier = 2
+    tier = 2
 
     def __init__(self, min_methods: int = 3, min_jaccard: float = 0.7):
         self.min_methods = min_methods
         self.min_jaccard = min_jaccard
+        self.id = f"anon_body_jac_m{min_methods}_j{int(min_jaccard*100)}"
 
     def _bhs(self, rec: dict) -> set[str]:
         return {m.get("bha", "") for m in rec.get("methods", ())
@@ -1910,6 +1911,7 @@ DEFAULT_MATCHERS = [
     EnumValueNamesJaccard(min_jaccard=0.7, min_overlap=2),
     AnonBodyHashMultiset(min_methods=2),
     AnonBodyHashJaccard(min_methods=5, min_jaccard=0.85),
+    AnonBodyHashJaccard(min_methods=3, min_jaccard=0.95),
     # AnonBodyHashJaccard tried but caused slight regression — fuzzy
     # body matches displace better exact matches from other matchers.
     JaccardStrings(min_jaccard=0.7, min_overlap=3),
