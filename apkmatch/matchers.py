@@ -1910,17 +1910,28 @@ class BodyLXSequenceVote:
             if not ra or not rb: continue
             ma_list = ra.get("methods", ()); mb_list = rb.get("methods", ())
             if not ma_list or not mb_list: continue
-            # Pair methods by substituted signature equality (more
-            # robust than raw — catches methods whose param types are
-            # LX classes that got mapped).
+            # Pair methods by substituted signature equality first
+            # (most robust), then by anonymized body hash for methods
+            # that survived signature changes. `bha` is LX-stripped so
+            # it's a mapping-independent method-identity fingerprint.
             b_by_sig: dict[str, dict] = {mb["sig"]: mb for mb in mb_list}
+            b_by_bha: dict[str, list[dict]] = defaultdict(list)
+            for mb in mb_list:
+                if mb.get("bha"):
+                    b_by_bha[mb["bha"]].append(mb)
+            used_b_ids = set()
             for ma in ma_list:
                 sub_sig = self._sub_sig(ma["sig"], mapping)
                 mb = b_by_sig.get(sub_sig)
                 if mb is None:
-                    # Try raw sig as fallback (covers methods with no LX refs)
                     mb = b_by_sig.get(ma["sig"])
-                    if mb is None: continue
+                if mb is None and ma.get("bha"):
+                    # Pick a bha-matching B method not yet used.
+                    for cand in b_by_bha.get(ma["bha"], ()):
+                        if id(cand) not in used_b_ids:
+                            mb = cand; break
+                if mb is None: continue
+                used_b_ids.add(id(mb))
                 aseq = ma.get("body_lx", ())
                 bseq = mb.get("body_lx", ())
                 if len(aseq) != len(bseq) or not aseq: continue
