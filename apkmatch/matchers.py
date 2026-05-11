@@ -799,7 +799,10 @@ class AnonBodyHashJaccard:
                 bs = b_bhs[bid]
                 jac = hit / max(1, len(ans | bs))
                 if jac < self.min_jaccard: continue
-                conf = 0.65 + 0.27 * (jac - self.min_jaccard) / (1 - self.min_jaccard)
+                if self.min_jaccard >= 1.0:
+                    conf = 0.92
+                else:
+                    conf = 0.65 + 0.27 * (jac - self.min_jaccard) / (1 - self.min_jaccard)
                 yield Candidate(r["id"], bid, conf, self.id,
                                 ("anon_body_jac", round(jac, 2)))
 
@@ -1912,6 +1915,8 @@ DEFAULT_MATCHERS = [
     AnonBodyHashMultiset(min_methods=2),
     AnonBodyHashJaccard(min_methods=5, min_jaccard=0.85),
     AnonBodyHashJaccard(min_methods=3, min_jaccard=0.95),
+    # 2-method exact pass tried — regressed neighbour consistency
+    # without coverage win; multiset matcher already covers exacts.
     # AnonBodyHashJaccard tried but caused slight regression — fuzzy
     # body matches displace better exact matches from other matchers.
     JaccardStrings(min_jaccard=0.7, min_overlap=3),
