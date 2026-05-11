@@ -1804,6 +1804,23 @@ class BodyLXSequenceVote:
         self.min_margin = min_margin
         self.id = f"body_lx_seq_vote_n{min_votes}"
 
+    @staticmethod
+    def _sub_sig(sig: str, mapping) -> str:
+        out = []; i = 0
+        while i < len(sig):
+            c = sig[i]
+            if c == "L":
+                e = sig.find(";", i)
+                if e == -1: out.append(sig[i:]); break
+                ref = sig[i:e+1]
+                if ref.startswith("LX/"):
+                    out.append(mapping.get(ref) or ref)
+                else:
+                    out.append(ref)
+                i = e + 1; continue
+            out.append(c); i += 1
+        return "".join(out)
+
     def propose(self, a, b, mapping):
         votes: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
         for a_cid, b_cid in mapping:
@@ -1811,11 +1828,17 @@ class BodyLXSequenceVote:
             if not ra or not rb: continue
             ma_list = ra.get("methods", ()); mb_list = rb.get("methods", ())
             if not ma_list or not mb_list: continue
-            # Pair methods by raw signature equality (cheap, exact).
+            # Pair methods by substituted signature equality (more
+            # robust than raw — catches methods whose param types are
+            # LX classes that got mapped).
             b_by_sig: dict[str, dict] = {mb["sig"]: mb for mb in mb_list}
             for ma in ma_list:
-                mb = b_by_sig.get(ma["sig"])
-                if mb is None: continue
+                sub_sig = self._sub_sig(ma["sig"], mapping)
+                mb = b_by_sig.get(sub_sig)
+                if mb is None:
+                    # Try raw sig as fallback (covers methods with no LX refs)
+                    mb = b_by_sig.get(ma["sig"])
+                    if mb is None: continue
                 aseq = ma.get("body_lx", ())
                 bseq = mb.get("body_lx", ())
                 if len(aseq) != len(bseq) or not aseq: continue
