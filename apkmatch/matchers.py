@@ -1787,6 +1787,81 @@ class MappedNeighbourFingerprint:
                                 ("mapped_nb_fp", len(blst)))
 
 
+class CallsFullPositionVote:
+    """Tier-3. For each confirmed class pair, pair methods by
+    substituted-signature equality. For each method-pair, walk
+    calls_full sequences in lockstep. Vote (A_cls -> B_cls) at
+    every position where both are unmapped LX AND their method
+    names match (or full sigs match after substitution).
+
+    Tighter than body_lx vote because it requires method-name
+    agreement at each callsite position, filtering out spurious
+    same-position alignments.
+    """
+    tier = 3
+
+    def __init__(self, min_votes: int = 2, min_margin: int = 1):
+        self.min_votes = min_votes
+        self.min_margin = min_margin
+        self.id = f"calls_full_position_vote_n{min_votes}"
+
+    @staticmethod
+    def _sub_sig(sig: str, mapping) -> str:
+        out = []; i = 0
+        while i < len(sig):
+            c = sig[i]
+            if c == "L":
+                e = sig.find(";", i)
+                if e == -1: out.append(sig[i:]); break
+                ref = sig[i:e+1]
+                if ref.startswith("LX/"):
+                    out.append(mapping.get(ref) or ref)
+                else:
+                    out.append(ref)
+                i = e + 1; continue
+            out.append(c); i += 1
+        return "".join(out)
+
+    def propose(self, a, b, mapping):
+        votes: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        for a_cid, b_cid in mapping:
+            ra = a.get(a_cid); rb = b.get(b_cid)
+            if not ra or not rb: continue
+            ma_list = ra.get("methods", ()); mb_list = rb.get("methods", ())
+            if not ma_list or not mb_list: continue
+            b_by_sig = {mb["sig"]: mb for mb in mb_list}
+            for ma in ma_list:
+                sub_sig = self._sub_sig(ma["sig"], mapping)
+                mb = b_by_sig.get(sub_sig) or b_by_sig.get(ma["sig"])
+                if mb is None: continue
+                a_cf = ma.get("calls_full", ())
+                b_cf = mb.get("calls_full", ())
+                if len(a_cf) != len(b_cf) or not a_cf: continue
+                for (acls, asig), (bcls, bsig) in zip(a_cf, b_cf):
+                    if not acls.startswith("LX/") or not bcls.startswith("LX/"):
+                        continue
+                    if mapping.get(acls) is not None: continue
+                    if mapping.inverse(bcls) is not None: continue
+                    # Method names (sig prefix before '(') must match,
+                    # or the substituted full sigs must agree.
+                    a_mname = asig.split("(", 1)[0]
+                    b_mname = bsig.split("(", 1)[0]
+                    if a_mname != b_mname:
+                        sub_asig = self._sub_sig(asig, mapping)
+                        if sub_asig != bsig:
+                            continue
+                    votes[acls][bcls] += 1
+        for a_cid, vmap in votes.items():
+            if not vmap: continue
+            top_b, top_v = max(vmap.items(), key=lambda kv: kv[1])
+            if top_v < self.min_votes: continue
+            second = max((v for k, v in vmap.items() if k != top_b), default=0)
+            if top_v - second < self.min_margin: continue
+            conf = min(0.74 + 0.03 * (top_v - second), 0.93)
+            yield Candidate(a_cid, top_b, conf, self.id,
+                            ("calls_full_position", top_v, second))
+
+
 class BodyLXSequenceVote:
     """Tier-3. For each confirmed class pair, pair methods first
     (by substituted signature); for each paired method, walk the
@@ -2873,6 +2948,8 @@ DEFAULT_MATCHERS = [
     AnnsPositionLXVote(min_votes=1, min_margin=1),
     BodyLXSequenceVote(min_votes=2, min_margin=1),
     BodyLXSequenceVote(min_votes=1, min_margin=1),
+    CallsFullPositionVote(min_votes=2, min_margin=1),
+    CallsFullPositionVote(min_votes=1, min_margin=1),
     ReverseLockStep(min_mapped=4),
     ReverseLockStep(min_mapped=3),
     ReverseLockStep(min_mapped=2),
