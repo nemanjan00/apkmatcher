@@ -3045,7 +3045,10 @@ DEFAULT_MATCHERS = [
     StringSetHash(),
     StringsPlusStableRefs(),
     StableRefsMultiset(),
-    CorroboratingShapeFingerprint(),
+    # CorroboratingShapeFingerprint tested — barely moved
+    # mean_matchers_per_pair (1.152 -> 1.154) and slightly regressed
+    # neighbour consistency. The shape buckets are too coarse to
+    # corroborate without occasional false matches.
     CallTargetMultiset(min_targets=4),
     FieldTargetMultiset(min_targets=3),
     FieldAccessByTypeMultiset(min_accesses=3),
