@@ -1850,9 +1850,7 @@ DEFAULT_MATCHERS = [
     EnumValueNames(),
     EnumValueNamesJaccard(min_jaccard=0.7, min_overlap=2),
     AnonBodyHashMultiset(min_methods=2),
-    # BhaMethodVote tried — adds a few hundred matches but at cost
-    # of neighbour consistency. Body-hash signal is best as exact
-    # multiset, not per-method voting.
+    AnonBodyHashJaccard(min_methods=5, min_jaccard=0.85),
     # AnonBodyHashJaccard tried but caused slight regression — fuzzy
     # body matches displace better exact matches from other matchers.
     JaccardStrings(min_jaccard=0.7, min_overlap=3),
