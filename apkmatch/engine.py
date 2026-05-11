@@ -301,7 +301,7 @@ class Engine:
         tier2_subst = [m for m in self.matchers
                        if getattr(m, "tier", 2) == 2
                        and getattr(m, "id", "") in second_pass_ids]
-        for rnd in range(0 if not self.two_pass else 1):
+        for rnd in range(0 if not self.two_pass else 2):
             if not len(self.mapping):
                 break
             _log(f"=== two-pass round {rnd+1}: substituting + re-running tier-2 ===")
