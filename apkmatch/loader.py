@@ -140,6 +140,26 @@ def _normalize_op(line: str) -> str:
     return " ".join(out)
 
 
+def _strip_lx(line: str) -> str:
+    """Replace every `LX/...;` reference with a single placeholder
+    `LX;`. Lets two methods that differ only by which LX names rotated
+    produce the same body hash."""
+    out = []
+    i = 0
+    while i < len(line):
+        c = line[i]
+        if c == "L" and line[i:i+3] == "LX/":
+            e = line.find(";", i)
+            if e == -1:
+                out.append(line[i:]); break
+            out.append("LX;")
+            i = e + 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def _maybe_resource(line: str) -> str | None:
     """If `line` is `const vN, 0x7f...`, return the resolved resource
     name; otherwise None."""
@@ -223,11 +243,19 @@ def parse_class(path: str, bucket: str) -> dict | None:
                         "\n".join(sorted(cur_body)).encode(), digest_size=8
                     ).hexdigest()
                     body_hashes.append(h)
+                    # LX-stripped body hash: the same method body in two
+                    # builds will produce the same `bh_anon` even when
+                    # LX/ class names rotated, as long as the call /
+                    # field-access shape is identical.
+                    anon_lines = sorted(_strip_lx(l) for l in cur_body)
+                    bh_anon = hashlib.blake2b(
+                        "\n".join(anon_lines).encode(), digest_size=8
+                    ).hexdigest()
                 else:
-                    h = ""
+                    h = ""; bh_anon = ""
                 methods.append({
                     "sig": cur_sig, "name": cur_method_name,
-                    "native": cur_is_native, "bh": h,
+                    "native": cur_is_native, "bh": h, "bha": bh_anon,
                     "calls": cur_calls, "facc": cur_facc,
                     "strs": cur_strings, "br": cur_n_branches,
                 })

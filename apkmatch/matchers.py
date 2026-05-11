@@ -654,6 +654,45 @@ class FieldTargetMultiset:
                                     ("field_targets_ms", len(alst), len(blst)))
 
 
+class AnonBodyHashMultiset:
+    """Tier 2. Multiset of LX-stripped per-method body hashes
+    (`bha` field). Strips every `LX/...;` reference in the smali body
+    to a single placeholder before hashing, so the same method
+    body hashes identically in two builds even when the LX classes
+    it calls have rotated.
+
+    Class fingerprint = sorted multiset of per-method `bha` hashes,
+    plus shape (nm, nf, nn, mods). Specificity-scaled.
+    """
+    id = "anon_body_ms"; tier = 2
+
+    def __init__(self, min_methods: int = 2):
+        self.min_methods = min_methods
+
+    def _fp(self, rec: dict) -> str | None:
+        ms = rec.get("methods", ())
+        bhs = sorted(m.get("bha", "") for m in ms if m.get("bha"))
+        if len(bhs) < self.min_methods:
+            return None
+        return _fp("abm", bhs, rec["nm"], rec["nf"], rec["nn"],
+                   tuple(rec["mods"]))
+
+    def propose(self, a, b):
+        Bidx = defaultdict(list)
+        for r in b.classes():
+            h = self._fp(r)
+            if h: Bidx[h].append(r["id"])
+        for r in a.classes():
+            h = self._fp(r)
+            if not h: continue
+            blst = Bidx.get(h)
+            if not blst: continue
+            conf = _specificity_confidence(0.93, 1, len(blst))
+            for bid in blst:
+                yield Candidate(r["id"], bid, conf, self.id,
+                                ("anon_body_ms", len(blst)))
+
+
 class MethodCallSetSubstituted:
     """Tier 3. For each A class, compute a per-method 'API surface'
     fingerprint:
@@ -1720,6 +1759,7 @@ DEFAULT_MATCHERS = [
     FieldTargetMultiset(min_targets=3),
     EnumValueNames(),
     EnumValueNamesJaccard(min_jaccard=0.7, min_overlap=2),
+    AnonBodyHashMultiset(min_methods=2),
     JaccardStrings(min_jaccard=0.7, min_overlap=3),
     LineRefMultiset(min_refs=4),
 
