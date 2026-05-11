@@ -389,7 +389,7 @@ class Engine:
                 a_nbs = list(self.a.neighbours(a))
                 mapped_nbs = [self.mapping.get(n) for n in a_nbs
                               if self.mapping.get(n) is not None]
-                if len(mapped_nbs) < 3:
+                if len(mapped_nbs) < 2:
                     continue
                 b_nbs = set(self.b.neighbours(b))
                 hits = sum(1 for x in mapped_nbs if x in b_nbs)
