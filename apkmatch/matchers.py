@@ -2105,6 +2105,70 @@ class SiblingByMappedSuperLoose:
                             ("sibling_loose",))
 
 
+class SiblingBySubstitutedSignatures:
+    """Tier-3. For each unmatched A class with mapped super, bucket by
+    (mapped_super, sorted substituted-signature multiset, modifiers).
+    Substituted signatures encode much more information than method
+    counts — two classes sharing both a super and a method-signature
+    set are very likely siblings/duplicates of each other.
+
+    Yields candidates when an A class's fingerprint matches a unique
+    unmatched B class with the corresponding raw signature multiset.
+    """
+    id = "sibling_sub_sigs"; tier = 3
+
+    def __init__(self, min_sigs: int = 2):
+        self.min_sigs = min_sigs
+
+    def _sub_sig(self, sig: str, mapping) -> str:
+        out = []; i = 0
+        while i < len(sig):
+            c = sig[i]
+            if c == "L":
+                e = sig.find(";", i)
+                if e == -1: out.append(sig[i:]); break
+                ref = sig[i:e+1]
+                if ref.startswith("LX/"):
+                    out.append(mapping.get(ref) or ref)
+                else:
+                    out.append(ref)
+                i = e + 1; continue
+            out.append(c); i += 1
+        return "".join(out)
+
+    def _mapped_super(self, cls, mapping):
+        s = cls.get("super")
+        if not s or s == "Ljava/lang/Object;": return None
+        if not s.startswith("LX/"): return s
+        return mapping.get(s)
+
+    def propose(self, a, b, mapping):
+        Bidx = defaultdict(list)
+        for r in b.classes():
+            if not r["id"].startswith("LX/"): continue
+            if mapping.inverse(r["id"]) is not None: continue
+            sigs = r.get("sigs", ())
+            if len(sigs) < self.min_sigs: continue
+            sb = r.get("super")
+            if not sb or sb == "Ljava/lang/Object;": continue
+            key = (sb, tuple(sorted(sigs)), tuple(r["mods"]))
+            Bidx[key].append(r["id"])
+        for r in a.classes():
+            if not r["id"].startswith("LX/"): continue
+            if mapping.get(r["id"]) is not None: continue
+            sigs = r.get("sigs", ())
+            if len(sigs) < self.min_sigs: continue
+            sa = self._mapped_super(r, mapping)
+            if sa is None: continue
+            sub_sigs = tuple(sorted(self._sub_sig(s, mapping) for s in sigs))
+            key = (sa, sub_sigs, tuple(r["mods"]))
+            blst = Bidx.get(key)
+            if not blst or len(blst) != 1:
+                continue
+            yield Candidate(r["id"], blst[0], 0.85, self.id,
+                            ("sibling_sub_sigs",))
+
+
 class SiblingByMappedSuper:
     """Tier-3 matcher for tiny classes that share a (post-mapping)
     super and a structural shape.
@@ -2223,6 +2287,7 @@ DEFAULT_MATCHERS = [
     CallTargetWithSubstitution(min_targets=6),
     SiblingByMappedSuper(),
     SiblingByMappedSuperLoose(),
+    SiblingBySubstitutedSignatures(min_sigs=3),
     BhaMethodVote(min_votes=3, min_ratio=0.5),
     MethodSigSubstitutedVote(min_votes=4, min_ratio=0.7),
     # SiblingByMappedInterfaces() — tried but regressed quality
