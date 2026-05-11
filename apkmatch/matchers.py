@@ -654,6 +654,96 @@ class FieldTargetMultiset:
                                     ("field_targets_ms", len(alst), len(blst)))
 
 
+class BhaMethodVote:
+    """Tier 2. For each unmatched A class, look up each method's
+    LX-stripped body hash (`bha`) in B's index. Tally votes for B
+    classes that contain methods with matching bha. Propose B class
+    where vote count is >= min_votes AND >= ratio of A's method count.
+
+    Captures classes where MOST methods are identical post-anonymization
+    but at least one method changed (so the multiset doesn't match
+    exactly). Body content is high-precision; high vote count is
+    near-certain identity.
+    """
+    id = "bha_method_vote"; tier = 2
+
+    def __init__(self, min_votes: int = 3, min_ratio: float = 0.5):
+        self.min_votes = min_votes
+        self.min_ratio = min_ratio
+
+    def propose(self, a, b):
+        # B index: bha -> list of (b_class_id, method_count)
+        idx: dict[str, list[tuple[str, int]]] = defaultdict(list)
+        for r in b.classes():
+            for m in r.get("methods", ()):
+                bha = m.get("bha", "")
+                if bha:
+                    idx[bha].append((r["id"], r["nm"]))
+        for r in a.classes():
+            ms = r.get("methods", ())
+            bhas = [m.get("bha", "") for m in ms if m.get("bha")]
+            if len(bhas) < self.min_votes: continue
+            counts: dict[str, int] = defaultdict(int)
+            for bha in bhas:
+                seen_b = set()
+                for bid, _ in idx.get(bha, ()):
+                    if bid in seen_b: continue
+                    seen_b.add(bid)
+                    counts[bid] += 1
+            if not counts: continue
+            top_b, top_v = max(counts.items(), key=lambda kv: kv[1])
+            if top_v < self.min_votes: continue
+            if top_v / len(bhas) < self.min_ratio: continue
+            second = max((v for k, v in counts.items() if k != top_b), default=0)
+            if top_v - second < 1: continue
+            conf = min(0.7 + 0.05 * (top_v - second), 0.93)
+            yield Candidate(r["id"], top_b, conf, self.id,
+                            ("bha_method_vote", top_v, second))
+
+
+class AnonBodyHashJaccard:
+    """Tier 2. Fuzzy variant of AnonBodyHashMultiset using Jaccard.
+    Catches classes whose method bodies changed slightly (a method
+    added or refactored) but whose remaining bodies still match.
+    Inverted-index seeded by per-bha lookup, not brute force.
+    """
+    id = "anon_body_jac"; tier = 2
+
+    def __init__(self, min_methods: int = 3, min_jaccard: float = 0.7):
+        self.min_methods = min_methods
+        self.min_jaccard = min_jaccard
+
+    def _bhs(self, rec: dict) -> set[str]:
+        return {m.get("bha", "") for m in rec.get("methods", ())
+                if m.get("bha")}
+
+    def propose(self, a, b):
+        # Inverted: bha -> B class IDs
+        idx: dict[str, list[str]] = defaultdict(list)
+        b_bhs: dict[str, set[str]] = {}
+        for r in b.classes():
+            bs = self._bhs(r)
+            if len(bs) < self.min_methods: continue
+            b_bhs[r["id"]] = bs
+            for h in bs:
+                idx[h].append(r["id"])
+        for r in a.classes():
+            ans = self._bhs(r)
+            if len(ans) < self.min_methods: continue
+            counts: dict[str, int] = defaultdict(int)
+            for h in ans:
+                for bid in idx.get(h, ()):
+                    counts[bid] += 1
+            for bid, hit in counts.items():
+                if hit < self.min_methods: continue
+                bs = b_bhs[bid]
+                jac = hit / max(1, len(ans | bs))
+                if jac < self.min_jaccard: continue
+                conf = 0.65 + 0.27 * (jac - self.min_jaccard) / (1 - self.min_jaccard)
+                yield Candidate(r["id"], bid, conf, self.id,
+                                ("anon_body_jac", round(jac, 2)))
+
+
 class AnonBodyHashMultiset:
     """Tier 2. Multiset of LX-stripped per-method body hashes
     (`bha` field). Strips every `LX/...;` reference in the smali body
@@ -1760,6 +1850,11 @@ DEFAULT_MATCHERS = [
     EnumValueNames(),
     EnumValueNamesJaccard(min_jaccard=0.7, min_overlap=2),
     AnonBodyHashMultiset(min_methods=2),
+    # BhaMethodVote tried — adds a few hundred matches but at cost
+    # of neighbour consistency. Body-hash signal is best as exact
+    # multiset, not per-method voting.
+    # AnonBodyHashJaccard tried but caused slight regression — fuzzy
+    # body matches displace better exact matches from other matchers.
     JaccardStrings(min_jaccard=0.7, min_overlap=3),
     LineRefMultiset(min_refs=4),
 
