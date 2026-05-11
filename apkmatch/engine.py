@@ -218,6 +218,7 @@ class Engine:
             _log(f"=== validator pass (after tier 2) ===")
             self._validate_all("post-tier2")
 
+
         # Tier 3: iterate to fixpoint
         converged = False
         if tiers.get(3):

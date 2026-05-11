@@ -654,6 +654,62 @@ class FieldTargetMultiset:
                                     ("field_targets_ms", len(alst), len(blst)))
 
 
+class PerMethodCallSet:
+    """Tier 2. For each method M_a in any A class, compute a fingerprint
+    over its stable-only (target_class, method_name) call set + its
+    parameter count + its branch count. Index B methods by the same
+    fingerprint. When an A method's fingerprint matches exactly one
+    B method's fingerprint, that's evidence the parent classes pair.
+
+    Class-level: tally, for each unmatched A class, how many of its
+    methods uniquely point to the same B class. Propose when:
+      * vote count >= min_votes,
+      * winning B class beats runner-up by margin.
+    """
+    id = "per_method_callset"; tier = 2
+
+    def __init__(self, min_votes: int = 2, min_call_targets: int = 2):
+        self.min_votes = min_votes
+        self.min_call_targets = min_call_targets
+
+    def _method_fp(self, m: dict) -> str | None:
+        stable_calls = sorted({(c, n) for c, n in m.get("calls", ())
+                               if not c.startswith("LX/")})
+        if len(stable_calls) < self.min_call_targets:
+            return None
+        # Param count from sig
+        sig = m.get("sig", "")
+        lp = sig.find("("); rp = sig.find(")", lp)
+        params = sig[lp+1:rp] if (lp != -1 and rp != -1) else ""
+        return _fp("pmc", stable_calls, len(params), m.get("br", 0),
+                   m.get("name", ""))
+
+    def propose(self, a, b):
+        b_index: dict[str, list[str]] = defaultdict(list)
+        # Index B: fingerprint -> list of B class ids (uniqueness via set)
+        for r in b.classes():
+            for m in r.get("methods", ()):
+                fp = self._method_fp(m)
+                if fp:
+                    b_index[fp].append(r["id"])
+        for r in a.classes():
+            votes: dict[str, int] = defaultdict(int)
+            for m in r.get("methods", ()):
+                fp = self._method_fp(m)
+                if fp is None: continue
+                cands = b_index.get(fp, ())
+                if len(set(cands)) == 1:
+                    votes[cands[0]] += 1
+            if not votes: continue
+            top_b, top_v = max(votes.items(), key=lambda kv: kv[1])
+            if top_v < self.min_votes: continue
+            second = max((v for k, v in votes.items() if k != top_b), default=0)
+            if top_v - second < 1: continue
+            conf = min(0.7 + 0.05 * top_v, 0.92)
+            yield Candidate(r["id"], top_b, conf, self.id,
+                            ("per_method_callset", top_v, second))
+
+
 class BhaMethodVote:
     """Tier 2. For each unmatched A class, look up each method's
     LX-stripped body hash (`bha`) in B's index. Tally votes for B
@@ -1886,7 +1942,7 @@ DEFAULT_MATCHERS = [
     CallTargetWithSubstitution(min_targets=6),
     SiblingByMappedSuper(),
     SiblingByMappedSuperLoose(),
-    BhaMethodVote(min_votes=4, min_ratio=0.6),
+    BhaMethodVote(min_votes=3, min_ratio=0.5),
     # SiblingByMappedInterfaces() — tried but regressed quality
     # (matches lambdas that look alike; LockStep already covers
     # the cases it gets right).
