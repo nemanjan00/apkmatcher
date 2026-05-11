@@ -319,6 +319,24 @@ class Engine:
             if revoked == 0:
                 break
 
+        # Second tier-3 pass after cleanup: the revoked pairs left
+        # gaps that tier-3 matchers might fill correctly now that
+        # noise has been removed. Short-circuit if no churn.
+        if tiers.get(3):
+            _log(f"=== second tier-3 sweep (post-cleanup) ===")
+            for it in range(3):
+                _log(f"--- post-cleanup iter {it+1} ---")
+                total_churn = 0
+                for m in tiers[3]:
+                    churn = self._run_matcher(m, mapping_arg=True)
+                    total_churn += (churn.confirmed_added
+                                    + churn.confirmed_removed
+                                    + churn.confirmed_changed)
+                if self.validators:
+                    self._validate_all(f"post-cleanup-iter{it+1}")
+                if total_churn < self.tier3_min_churn:
+                    break
+
         # Two-pass: rebuild A with LX refs substituted, re-run
         # substitution-sensitive tier-2 matchers. Single round —
         # multi-round adds marginal coverage but iterates noise.
