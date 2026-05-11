@@ -91,7 +91,7 @@ class Engine:
         matchers=None,
         validators=None,
         confirmation_threshold: float = 0.6,
-        displace_margin: float = 0.1,
+        displace_margin: float = 0.05,
         tier3_max_iters: int = 20,
         tier3_min_churn: int = 50,
         tier3_quiet_epochs: int = 2,
