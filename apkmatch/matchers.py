@@ -1745,6 +1745,60 @@ class MappedNeighbourFingerprint:
                                 ("mapped_nb_fp", len(blst)))
 
 
+class FieldPositionLXVote:
+    """Tier-3. For each confirmed class pair, walk the field_types
+    lists position-by-position. When position i has an unmapped LX
+    ref in A's field type and an unmapped LX ref in B's field type,
+    vote LX_a -> LX_b. Tally across all confirmed pairs; emit
+    pairs whose top vote count exceeds threshold and beats runner-up.
+
+    The field declaration order is highly preserved across builds
+    (R8 doesn't reorder fields). This makes position-aligned LX
+    voting precise and powerful for classes whose only signal is
+    their field-type LX refs.
+    """
+    id = "field_position_lx_vote"; tier = 3
+
+    def __init__(self, min_votes: int = 2, min_margin: int = 1):
+        self.min_votes = min_votes
+        self.min_margin = min_margin
+
+    @staticmethod
+    def _extract_lx(t: str) -> str | None:
+        # field type may be primitive ('I'), array ('[Lfoo/Bar;'), or
+        # class ref. Strip leading [ for array depth, return LX ref or None.
+        while t.startswith("["):
+            t = t[1:]
+        if t.startswith("LX/") and t.endswith(";"):
+            return t
+        return None
+
+    def propose(self, a, b, mapping):
+        votes: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        for a_cid, b_cid in mapping:
+            ra = a.get(a_cid); rb = b.get(b_cid)
+            if not ra or not rb: continue
+            af = ra.get("field_types", ())
+            bf = rb.get("field_types", ())
+            if len(af) != len(bf) or not af: continue
+            for at, bt in zip(af, bf):
+                a_ref = self._extract_lx(at)
+                b_ref = self._extract_lx(bt)
+                if not a_ref or not b_ref: continue
+                if mapping.get(a_ref) is not None: continue
+                if mapping.inverse(b_ref) is not None: continue
+                votes[a_ref][b_ref] += 1
+        for a_cid, vmap in votes.items():
+            if not vmap: continue
+            top_b, top_v = max(vmap.items(), key=lambda kv: kv[1])
+            if top_v < self.min_votes: continue
+            second = max((v for k, v in vmap.items() if k != top_b), default=0)
+            if top_v - second < self.min_margin: continue
+            conf = min(0.7 + 0.05 * (top_v - second), 0.93)
+            yield Candidate(a_cid, top_b, conf, self.id,
+                            ("field_position_lx", top_v, second))
+
+
 class MethodWalk:
     """Tier-3 method-level graph walk.
 
@@ -2586,6 +2640,7 @@ DEFAULT_MATCHERS = [
     # regression; reverse-edge-only fingerprints are too generic for
     # most classes.
     MethodWalk(min_inferences=2, min_margin=1),
+    FieldPositionLXVote(min_votes=2, min_margin=1),
     ReverseLockStep(min_mapped=4),
     ReverseLockStep(min_mapped=3),
     ReverseLockStep(min_mapped=2),
