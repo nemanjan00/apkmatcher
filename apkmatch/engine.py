@@ -308,7 +308,19 @@ class Engine:
                     continue
                 b_nbs = set(self.b.neighbours(b))
                 hits = sum(1 for x in mapped_nbs if x in b_nbs)
+                # If forward has zero hits, additionally require zero
+                # hits on reverse-neighbour side when reverse evidence
+                # is also strong. Catches pairs whose forward graph is
+                # noisy but reverse graph confirms them.
                 if hits == 0:
+                    a_rev = list(self.a.reverse_neighbours(a))
+                    mapped_rev = [self.mapping.get(n) for n in a_rev
+                                  if self.mapping.get(n) is not None]
+                    if len(mapped_rev) >= 2:
+                        b_rev_set = set(self.b.reverse_neighbours(b))
+                        rev_hits = sum(1 for x in mapped_rev if x in b_rev_set)
+                        if rev_hits > 0:
+                            continue  # reverse side confirms, keep
                     self.mapping._a2b.pop(a, None)
                     self.mapping._b2a.pop(b, None)
                     self.mapping._conf.pop(a, None)
