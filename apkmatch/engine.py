@@ -304,20 +304,11 @@ class Engine:
                 a_nbs = list(self.a.neighbours(a))
                 mapped_nbs = [self.mapping.get(n) for n in a_nbs
                               if self.mapping.get(n) is not None]
-                # Also consider reverse neighbours so classes with only
-                # incoming edges (markers / utility singletons) are
-                # checked from both directions.
-                a_rev = list(self.a.reverse_neighbours(a))
-                mapped_rev = [self.mapping.get(n) for n in a_rev
-                              if self.mapping.get(n) is not None]
-                total_mapped = len(mapped_nbs) + len(mapped_rev)
-                if total_mapped < 2:
+                if len(mapped_nbs) < 2:
                     continue
                 b_nbs = set(self.b.neighbours(b))
-                b_rev = set(self.b.reverse_neighbours(b))
-                fwd_hits = sum(1 for x in mapped_nbs if x in b_nbs)
-                rev_hits = sum(1 for x in mapped_rev if x in b_rev)
-                if fwd_hits + rev_hits == 0:
+                hits = sum(1 for x in mapped_nbs if x in b_nbs)
+                if hits == 0:
                     self.mapping._a2b.pop(a, None)
                     self.mapping._b2a.pop(b, None)
                     self.mapping._conf.pop(a, None)
@@ -398,20 +389,11 @@ class Engine:
                 a_nbs = list(self.a.neighbours(a))
                 mapped_nbs = [self.mapping.get(n) for n in a_nbs
                               if self.mapping.get(n) is not None]
-                # Also consider reverse neighbours so classes with only
-                # incoming edges (markers / utility singletons) are
-                # checked from both directions.
-                a_rev = list(self.a.reverse_neighbours(a))
-                mapped_rev = [self.mapping.get(n) for n in a_rev
-                              if self.mapping.get(n) is not None]
-                total_mapped = len(mapped_nbs) + len(mapped_rev)
-                if total_mapped < 2:
+                if len(mapped_nbs) < 2:
                     continue
                 b_nbs = set(self.b.neighbours(b))
-                b_rev = set(self.b.reverse_neighbours(b))
-                fwd_hits = sum(1 for x in mapped_nbs if x in b_nbs)
-                rev_hits = sum(1 for x in mapped_rev if x in b_rev)
-                if fwd_hits + rev_hits == 0:
+                hits = sum(1 for x in mapped_nbs if x in b_nbs)
+                if hits == 0:
                     self.mapping._a2b.pop(a, None)
                     self.mapping._b2a.pop(b, None)
                     self.mapping._conf.pop(a, None)
