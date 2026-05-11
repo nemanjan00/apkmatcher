@@ -807,6 +807,70 @@ class AnonBodyHashJaccard:
                                 ("anon_body_jac", round(jac, 2)))
 
 
+class FieldTypeMultisetSubstituted:
+    """Tier-3 variant: sorted multiset of substituted field types
+    (order-insensitive). Catches classes where field order changed
+    between builds — common when a refactor adds a field at the
+    top or middle of the class.
+    """
+    id = "field_type_ms_sub"; tier = 3
+
+    def __init__(self, min_fields: int = 3):
+        self.min_fields = min_fields
+
+    def _sub_super(self, s, mapping):
+        if not s or s == "Ljava/lang/Object;": return s
+        if s.startswith("LX/"): return mapping.get(s) or s
+        return s
+
+    def _sub_type(self, t, mapping):
+        depth = 0
+        while t.startswith("["):
+            depth += 1; t = t[1:]
+        if t.startswith("LX/") and t.endswith(";"):
+            sub = mapping.get(t)
+            if sub is None: return None
+            return "[" * depth + sub
+        return "[" * depth + t
+
+    def _fp_a(self, ra, mapping):
+        ft = ra.get("field_types", ())
+        if len(ft) < self.min_fields: return None
+        sub = []
+        for t in ft:
+            s = self._sub_type(t, mapping)
+            if s is None: return None
+            sub.append(s)
+        return _fp("ftms", tuple(sorted(sub)),
+                   self._sub_super(ra.get("super"), mapping),
+                   ra["nm"], tuple(ra["mods"]))
+
+    def _fp_b(self, rb):
+        ft = rb.get("field_types", ())
+        if len(ft) < self.min_fields: return None
+        return _fp("ftms", tuple(sorted(ft)), rb.get("super") or "",
+                   rb["nm"], tuple(rb["mods"]))
+
+    def propose(self, a, b, mapping):
+        Bidx = defaultdict(list)
+        for r in b.classes():
+            if not r["id"].startswith("LX/"): continue
+            if mapping.inverse(r["id"]) is not None: continue
+            h = self._fp_b(r)
+            if h: Bidx[h].append(r["id"])
+        for r in a.classes():
+            if not r["id"].startswith("LX/"): continue
+            if mapping.get(r["id"]) is not None: continue
+            h = self._fp_a(r, mapping)
+            if not h: continue
+            blst = Bidx.get(h)
+            if not blst: continue
+            conf = _specificity_confidence(0.82, 1, len(blst))
+            for bid in blst:
+                yield Candidate(r["id"], bid, conf, self.id,
+                                ("field_type_ms_sub", len(blst)))
+
+
 class FieldTypeSequenceSubstituted:
     """Tier-3. Per-class ordered list of field types, after substituting
     every LX type ref through the current mapping. Match against B's
@@ -2000,6 +2064,7 @@ DEFAULT_MATCHERS = [
     LockStep(min_mapped=1),
     DisambiguatingLockStep(min_mapped=3),
     FieldTypeSequenceSubstituted(min_fields=2),
+    FieldTypeMultisetSubstituted(min_fields=3),
     MappedNeighbourFingerprint(min_neighbours=3, min_mapped_ratio=0.7),
     MappedNeighbourFingerprint(min_neighbours=2, min_mapped_ratio=0.5),
     SymmetricNeighbourFingerprint(min_neighbours=4, min_mapped_ratio=0.6),
