@@ -1745,6 +1745,42 @@ class MappedNeighbourFingerprint:
                                 ("mapped_nb_fp", len(blst)))
 
 
+class SuperLXVote:
+    """Tier-3. For each confirmed class pair, if A's super is an
+    unmapped LX ref and B's super is an unmapped LX ref, vote
+    LX_a -> LX_b. Each pair contributes at most one vote.
+
+    Catches super classes that no other matcher has pinned but
+    that have many subclass instances in the confirmed mapping.
+    """
+    id = "super_lx_vote"; tier = 3
+
+    def __init__(self, min_votes: int = 2, min_margin: int = 1):
+        self.min_votes = min_votes
+        self.min_margin = min_margin
+
+    def propose(self, a, b, mapping):
+        votes: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        for a_cid, b_cid in mapping:
+            ra = a.get(a_cid); rb = b.get(b_cid)
+            if not ra or not rb: continue
+            sa = ra.get("super"); sb = rb.get("super")
+            if not sa or not sb: continue
+            if not sa.startswith("LX/") or not sb.startswith("LX/"): continue
+            if mapping.get(sa) is not None: continue
+            if mapping.inverse(sb) is not None: continue
+            votes[sa][sb] += 1
+        for a_cid, vmap in votes.items():
+            if not vmap: continue
+            top_b, top_v = max(vmap.items(), key=lambda kv: kv[1])
+            if top_v < self.min_votes: continue
+            second = max((v for k, v in vmap.items() if k != top_b), default=0)
+            if top_v - second < self.min_margin: continue
+            conf = min(0.75 + 0.04 * (top_v - second), 0.95)
+            yield Candidate(a_cid, top_b, conf, self.id,
+                            ("super_lx", top_v, second))
+
+
 class ImplsPositionLXVote:
     """Tier-3. For each confirmed class pair, walk impls list
     position-by-position. Vote LX_a -> LX_b for same-position
@@ -2677,6 +2713,7 @@ DEFAULT_MATCHERS = [
     MethodWalk(min_inferences=2, min_margin=1),
     FieldPositionLXVote(min_votes=2, min_margin=1),
     ImplsPositionLXVote(min_votes=2, min_margin=1),
+    SuperLXVote(min_votes=2, min_margin=1),
     ReverseLockStep(min_mapped=4),
     ReverseLockStep(min_mapped=3),
     ReverseLockStep(min_mapped=2),
