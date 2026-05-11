@@ -293,6 +293,8 @@ class Engine:
 
         # Neighbour-consistency cleanup, iterated. Revoking pairs can
         # remove evidence that supported other pairs, so re-check.
+        # First cleanup round, then re-run tier-3 matchers to give
+        # revoked slots a chance at a correct match.
         for cleanup_round in range(1):
             _log(f"=== neighbour-consistency cleanup round {cleanup_round+1} ===")
             revoked = 0
@@ -353,6 +355,30 @@ class Engine:
             _log(f"  round {rnd+1} gained {gained} pairs")
             if gained < 50:
                 break
+
+        # Final cleanup after two-pass: two-pass can introduce weak
+        # pairs based on substituted refs that don't satisfy
+        # neighbour consistency in the original view.
+        _log(f"=== neighbour-consistency cleanup (post two-pass) ===")
+        revoked = 0
+        for a, b in list(self.mapping):
+            if self.mapping.is_locked(a):
+                continue
+            a_nbs = list(self.a.neighbours(a))
+            mapped_nbs = [self.mapping.get(n) for n in a_nbs
+                          if self.mapping.get(n) is not None]
+            if len(mapped_nbs) < 3:
+                continue
+            b_nbs = set(self.b.neighbours(b))
+            hits = sum(1 for x in mapped_nbs if x in b_nbs)
+            if hits == 0:
+                self.mapping._a2b.pop(a, None)
+                self.mapping._b2a.pop(b, None)
+                self.mapping._conf.pop(a, None)
+                self.mapping._matchers.pop((a, b), None)
+                self.mapping.mark_negative(a, b)
+                revoked += 1
+        _log(f"  revoked {revoked} pairs post two-pass")
 
         return RunResult(
             epochs=self.mapping.epoch,
