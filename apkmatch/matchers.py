@@ -1270,6 +1270,65 @@ class ExtendedByLockStep:
                             ("extended_by", len(mapped_children)))
 
 
+class ReverseNeighbourFingerprint:
+    """Tier-3. For each unmatched A class C, build a sorted multiset of
+    its INCOMING neighbours after mapping substitution. For B, use B's
+    raw incoming neighbours. Match by fingerprint equality + shape.
+
+    Marker interfaces and base utilities have many incoming edges and
+    few outgoing; this matcher pins them by 'who references me'.
+    """
+    tier = 3
+
+    def __init__(self, min_neighbours: int = 4, min_mapped_ratio: float = 0.6):
+        self.min_neighbours = min_neighbours
+        self.min_mapped_ratio = min_mapped_ratio
+        self.id = f"rev_nb_fp_n{min_neighbours}_r{int(min_mapped_ratio*10)}"
+
+    def _fp_a(self, project, ra: dict, mapping):
+        cid = ra["id"]
+        rev = sorted(set(project.reverse_neighbours(cid)))
+        if len(rev) < self.min_neighbours: return None
+        sub = []; mapped = 0
+        for n in rev:
+            if n.startswith("LX/"):
+                m = mapping.get(n)
+                if m is None: continue
+                sub.append(m); mapped += 1
+            else:
+                sub.append(n); mapped += 1
+        if mapped / len(rev) < self.min_mapped_ratio:
+            return None
+        return _fp("rnf", tuple(sorted(sub)), ra["nm"], ra["nf"],
+                   tuple(ra["mods"]))
+
+    def _fp_b(self, project, rb: dict):
+        cid = rb["id"]
+        rev = sorted(set(project.reverse_neighbours(cid)))
+        if len(rev) < self.min_neighbours: return None
+        return _fp("rnf", tuple(rev), rb["nm"], rb["nf"],
+                   tuple(rb["mods"]))
+
+    def propose(self, a, b, mapping):
+        Bidx = defaultdict(list)
+        for r in b.classes():
+            if not r["id"].startswith("LX/"): continue
+            if mapping.inverse(r["id"]) is not None: continue
+            h = self._fp_b(b, r)
+            if h: Bidx[h].append(r["id"])
+        for r in a.classes():
+            if not r["id"].startswith("LX/"): continue
+            if mapping.get(r["id"]) is not None: continue
+            h = self._fp_a(a, r, mapping)
+            if not h: continue
+            blst = Bidx.get(h)
+            if not blst: continue
+            conf = _specificity_confidence(0.83, 1, len(blst))
+            for bid in blst:
+                yield Candidate(r["id"], bid, conf, self.id,
+                                ("rev_nb_fp", len(blst)))
+
+
 class SymmetricNeighbourFingerprint:
     """Tier-3. Like MappedNeighbourFingerprint but the multiset includes
     BOTH outgoing AND incoming mapped neighbours.
@@ -2143,6 +2202,9 @@ DEFAULT_MATCHERS = [
     MappedNeighbourFingerprint(min_neighbours=3, min_mapped_ratio=0.7),
     MappedNeighbourFingerprint(min_neighbours=2, min_mapped_ratio=0.5),
     SymmetricNeighbourFingerprint(min_neighbours=4, min_mapped_ratio=0.6),
+    # ReverseNeighbourFingerprint tried — caused neighbour consistency
+    # regression; reverse-edge-only fingerprints are too generic for
+    # most classes.
     MethodWalk(min_inferences=2, min_margin=1),
     ReverseLockStep(min_mapped=4),
     ReverseLockStep(min_mapped=3),
