@@ -83,8 +83,16 @@ class NativeSymbolSet:
 
 class UniqueString:
     """A literal that appears in exactly one A class and exactly one B
-    class — those two classes are paired."""
-    id = "unique_string"; tier = 2
+    class — those two classes are paired.
+
+    Tier 1 (anchor, lockable): a globally unique string is an
+    extremely high-precision signal — it means the literal text
+    survived obfuscation in both builds and the only class on each
+    side that contains it must be the same logical class. Locking
+    this match prevents it from being displaced by weaker tier-2/3
+    matchers later.
+    """
+    id = "unique_string"; tier = 1
 
     def propose(self, a, b):
         sA = defaultdict(list); sB = defaultdict(list)
@@ -100,7 +108,7 @@ class UniqueString:
             if len(alst) != 1: continue
             blst = sB.get(s)
             if blst and len(blst) == 1:
-                yield Candidate(alst[0], blst[0], 0.85, self.id, ("unique_str", s))
+                yield Candidate(alst[0], blst[0], 0.95, self.id, ("unique_str", s))
 
 
 class StringsPlusStableRefs:
