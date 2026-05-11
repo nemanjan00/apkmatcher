@@ -405,7 +405,8 @@ class WeightedNeighbourVote(NeighbourVote):
             if top_v < self.min_votes:
                 continue
             second = max((v for k, v in vmap.items() if k != top_b), default=0)
-            if top_v - second < 2:
+            min_margin = 1 if self.min_votes <= 1 else 2
+            if top_v - second < min_margin:
                 continue
             conf = min(0.55 + 0.02 * (top_v - second), 0.92)
             yield Candidate(a_cid, top_b, conf, self.id,
@@ -1637,7 +1638,8 @@ DEFAULT_MATCHERS = [
     ImplementedByLockStep(min_mapped=1),
     MethodCallSetSubstituted(),
     WeightedNeighbourVote(min_votes=4),
-    WeightedNeighbourVote(min_votes=2),  # Aggressive pass after others run
+    WeightedNeighbourVote(min_votes=2),
+    WeightedNeighbourVote(min_votes=1),  # Most aggressive pass
     BodyHashSubstituted(),
     CallTargetWithSubstitution(min_targets=6),
     SiblingByMappedSuper(),
