@@ -2287,7 +2287,7 @@ DEFAULT_MATCHERS = [
     CallTargetWithSubstitution(min_targets=6),
     SiblingByMappedSuper(),
     SiblingByMappedSuperLoose(),
-    SiblingBySubstitutedSignatures(min_sigs=3),
+    SiblingBySubstitutedSignatures(min_sigs=4),
     BhaMethodVote(min_votes=3, min_ratio=0.5),
     MethodSigSubstitutedVote(min_votes=4, min_ratio=0.7),
     # SiblingByMappedInterfaces() — tried but regressed quality
