@@ -1082,8 +1082,8 @@ class MethodWalk:
                         votes[a_lx[0][0]][b_lx[0][0]] += 2
                     else:
                         votes[a_lx[0][0]][b_lx[0][0]] += 1
-                # General: pair by method-name match
                 else:
+                    # General-case 1: pair by method-name match
                     a_by_name = defaultdict(list)
                     b_by_name = defaultdict(list)
                     for cls, nm in a_lx: a_by_name[nm].append(cls)
@@ -1093,6 +1093,12 @@ class MethodWalk:
                         if not blist: continue
                         if len(alist) == 1 and len(blist) == 1:
                             votes[alist[0]][blist[0]] += 1
+                    # General-case 2: positional alignment when lengths
+                    # match (small refactors don't reorder calls).
+                    if len(a_lx) == len(b_lx) and len(a_lx) <= 8:
+                        for (acls, anm), (bcls, bnm) in zip(a_lx, b_lx):
+                            if anm == bnm:
+                                votes[acls][bcls] += 1
         for a_cid, vmap in votes.items():
             if not vmap: continue
             top_b, top_v = max(vmap.items(), key=lambda kv: kv[1])
