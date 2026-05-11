@@ -722,11 +722,12 @@ class BestEffortContentMatch:
     classes that nothing else pinned but that have at least one
     informative shared anchor.
     """
-    id = "best_effort_content"; tier = 3
+    tier = 3
 
     def __init__(self, min_score: float = 0.6, min_margin: float = 0.15):
         self.min_score = min_score
         self.min_margin = min_margin
+        self.id = f"best_effort_s{int(min_score*100)}_m{int(min_margin*100)}"
 
     def propose(self, a, b, mapping):
         for cid in a.ids():
