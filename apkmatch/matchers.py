@@ -2992,7 +2992,8 @@ DEFAULT_MATCHERS = [
 
     # ---- Tier 2: content fingerprints ---------------------------------
     UniqueString(),
-    AnnotationValuesFingerprint(min_values=2),
+    # AnnotationValuesFingerprint tested — only 125 classes have
+    # >=2 annotation values, too sparse to break the plateau.
     # KotlinDebugMetadataFingerprint tested at tier 1 and tier 2 —
     # both regressed overall by displacing better matches. Kept in
     # the matchers module as a documented attempt.
