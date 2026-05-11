@@ -136,7 +136,9 @@ since non-LX classes are free anchors that round-trip by FQN.
 | + SiblingBySubstitutedSignatures + BestEffortContentMatch | 88.9 % | 87.8 % | 85.1 % | 100.0 % | 77.2 % | 21034 | 0.844 | 453 s |
 | + two-pass substitution + DeobfuscatedFQN + method/field output | 89.3 % | 88.2 % | 85.4 % | 100.0 % | 76.2 % | 21167 | 0.842 | 460 s |
 | + full-sig MethodWalk + sig-position LX inference | 89.5 % | 88.5 % | 85.6 % | 100.0 % | 76.0 % | 21218 | 0.843 | 512 s |
-| + FieldPositionLXVote + ImplsPositionLXVote + SuperLXVote | **90.9 %** | **90.0 %** | **87.0 %** | **100.0 %** | 76.1 % | **21433** | **0.845** | 519 s |
+| + FieldPositionLXVote + ImplsPositionLXVote + SuperLXVote | 90.9 % | 90.0 % | 87.0 % | 100.0 % | 76.1 % | 21433 | 0.845 | 519 s |
+| + AnnsPositionLXVote + n=1 variants | 91.8 % | 91.0 % | 87.8 % | 100.0 % | 75.7 % | 21610 | 0.846 | 516 s |
+| + BodyLXSequenceVote (per-method body LX-sequence position vote) | **92.6 %** | **92.0 %** | **88.6 %** | **100.0 %** | 75.0 % | **21672** | **0.846** | 534 s |
 
 ## Status
 
