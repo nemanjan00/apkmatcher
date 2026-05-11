@@ -362,7 +362,7 @@ class Engine:
         # (revoking a pair removes evidence supporting other weak
         # pairs); empirically 2 rounds picks up another small lift
         # without the over-revocation that 3+ rounds causes.
-        for cleanup_round in range(2):
+        for cleanup_round in range(1):
             _log(f"=== neighbour-consistency cleanup post-twopass r{cleanup_round+1} ===")
             revoked = 0
             for a, b in list(self.mapping):
