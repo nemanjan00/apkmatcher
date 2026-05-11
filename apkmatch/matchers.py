@@ -1404,6 +1404,41 @@ def _deobfuscated_fqns_from_strings(rec: dict) -> set[str]:
     return out
 
 
+class AnnotationValuesFingerprint:
+    """Tier-2. Match by the multiset of literal string values inside
+    .annotation blocks (e.g. `@SerializedName("foo")`,
+    `@JsonProperty("bar")`, GraphQL field tags, Retrofit `@GET` URLs).
+    These survive R8 stripping because they're literals required at
+    runtime for serialization / network.
+    """
+    id = "annotation_values"; tier = 2
+
+    def __init__(self, min_values: int = 2):
+        self.min_values = min_values
+
+    def _fp(self, rec: dict) -> str | None:
+        vs = sorted(set(rec.get("annotation_values", ())))
+        if len(vs) < self.min_values: return None
+        return _fp("annv", vs)
+
+    def propose(self, a, b):
+        Bidx = defaultdict(list); Aidx = defaultdict(list)
+        for r in b.classes():
+            h = self._fp(r)
+            if h: Bidx[h].append(r["id"])
+        for r in a.classes():
+            h = self._fp(r)
+            if h: Aidx[h].append(r["id"])
+        for h, alst in Aidx.items():
+            blst = Bidx.get(h)
+            if not blst: continue
+            conf = _specificity_confidence(0.93, len(alst), len(blst))
+            for ai in alst:
+                for bi in blst:
+                    yield Candidate(ai, bi, conf, self.id,
+                                    ("annotation_values", len(alst), len(blst)))
+
+
 class KotlinDebugMetadataFingerprint:
     """Tier-1 anchor. Match by the `c` (original class FQN) and `f`
     (source filename) fields of Kotlin's
@@ -2957,6 +2992,7 @@ DEFAULT_MATCHERS = [
 
     # ---- Tier 2: content fingerprints ---------------------------------
     UniqueString(),
+    AnnotationValuesFingerprint(min_values=2),
     # KotlinDebugMetadataFingerprint tested at tier 1 and tier 2 —
     # both regressed overall by displacing better matches. Kept in
     # the matchers module as a documented attempt.

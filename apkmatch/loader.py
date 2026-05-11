@@ -195,6 +195,11 @@ def parse_class(path: str, bucket: str) -> dict | None:
     # baked into the annotation literal strings.
     kotlin_meta: list[str] = []
     in_debug_metadata = False
+    # Any literal string assignments inside .annotation blocks
+    # (excluding DebugMetadata which has its own dedicated handling).
+    # Captures @SerializedName("foo"), @JsonProperty("bar"), etc.
+    annotation_values: list[str] = []
+    in_any_annotation = False
     nf = nm = ns = nn = 0
     strings: list[str] = []
     anns: list[str] = []
@@ -438,9 +443,11 @@ def parse_class(path: str, bucket: str) -> dict | None:
                     anns.append(tok); break
             in_debug_metadata = (ann_class ==
                                  "Lkotlin/coroutines/jvm/internal/DebugMetadata;")
+            in_any_annotation = True
             continue
         if line.startswith(".end annotation"):
             in_debug_metadata = False
+            in_any_annotation = False
             continue
         if in_debug_metadata:
             # Looking for `c = "kotlinx.coroutines.flow.SharedFlowImpl"`
@@ -450,6 +457,14 @@ def parse_class(path: str, bucket: str) -> dict | None:
                 q1 = line.find('"'); q2 = line.rfind('"')
                 if q1 != -1 and q2 > q1:
                     kotlin_meta.append(f"{key}={line[q1+1:q2]}")
+            continue
+        if in_any_annotation:
+            # Capture any literal `key = "..."` value — survives R8.
+            q1 = line.find('"'); q2 = line.rfind('"')
+            if q1 != -1 and q2 > q1 + 1 and " = " in line[:q1]:
+                v = line[q1+1:q2]
+                if v and len(v) >= 2 and len(v) <= 80:
+                    annotation_values.append(v)
             continue
 
     if cid is None:
@@ -469,6 +484,7 @@ def parse_class(path: str, bucket: str) -> dict | None:
         "line_refs": line_refs,
         "field_types": field_types,  # list[str] in declaration order
         "kotlin_meta": kotlin_meta,  # ['c=<FQN>', 'f=<filename>']
+        "annotation_values": annotation_values,  # @X(value="...") strings
     }
 
 
