@@ -710,6 +710,74 @@ class PerMethodCallSet:
                             ("per_method_callset", top_v, second))
 
 
+class BestEffortContentMatch:
+    """Tier-3 final pass. For each unmatched A class, find its best
+    B candidate via a content score over a CANDIDATE SET seeded by
+    inverted indexes (not brute force). The candidate set is the
+    union of B classes that share at least one substantial string
+    or one stable type ref with A. Propose top candidate when
+    score and margin pass thresholds.
+
+    Use after every other matcher has run. Last-ditch attempt for
+    classes that nothing else pinned but that have at least one
+    informative shared anchor.
+    """
+    id = "best_effort_content"; tier = 3
+
+    def __init__(self, min_score: float = 0.6, min_margin: float = 0.15):
+        self.min_score = min_score
+        self.min_margin = min_margin
+
+    def propose(self, a, b, mapping):
+        for cid in a.ids():
+            if mapping.get(cid) is not None:
+                continue
+            ra = a.get(cid)
+            if not ra:
+                continue
+            # Build candidate set via inverted indexes on B side.
+            cands: set[str] = set()
+            for s in ra["strings"]:
+                if len(s) >= 6:
+                    for bid in b.classes_containing_string(s):
+                        cands.add(bid)
+                    if len(cands) > 200:
+                        break  # too many seeds
+            # Augment via stable trefs / calls / facc
+            if len(cands) < 50:
+                stable_refs = [r for r in ra["calls"] + ra["facc"] + ra["trefs"]
+                               if not r.startswith("LX/")]
+                for sr in stable_refs[:5]:
+                    for bid in b.reverse_neighbours(sr):
+                        cands.add(bid)
+                        if len(cands) > 200:
+                            break
+                    if len(cands) > 200:
+                        break
+            cands = {x for x in cands
+                     if x.startswith("LX/") and mapping.inverse(x) is None}
+            if len(cands) > 50 or len(cands) < 2:
+                continue
+            scored = []
+            for bid in cands:
+                rb = b.get(bid)
+                if rb is None:
+                    continue
+                s = _content_score(ra, rb, mapping)
+                scored.append((s, bid))
+            if len(scored) < 2:
+                continue
+            scored.sort(reverse=True)
+            top_s, top_b = scored[0]
+            second_s = scored[1][0]
+            if top_s < self.min_score:
+                continue
+            if top_s - second_s < self.min_margin:
+                continue
+            yield Candidate(cid, top_b, 0.6 + (top_s - second_s),
+                            self.id, ("best_effort", round(top_s, 2)))
+
+
 class MethodSigSubstitutedVote:
     """Tier-3. For each method in any A class, substitute LX type refs
     in the method signature through the current mapping. Index B
@@ -2290,6 +2358,7 @@ DEFAULT_MATCHERS = [
     SiblingBySubstitutedSignatures(min_sigs=4),
     BhaMethodVote(min_votes=3, min_ratio=0.5),
     MethodSigSubstitutedVote(min_votes=4, min_ratio=0.7),
+    BestEffortContentMatch(min_score=0.75, min_margin=0.2),
     # SiblingByMappedInterfaces() — tried but regressed quality
     # (matches lambdas that look alike; LockStep already covers
     # the cases it gets right).
