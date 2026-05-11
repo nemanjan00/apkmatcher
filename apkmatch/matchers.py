@@ -85,14 +85,13 @@ class UniqueString:
     """A literal that appears in exactly one A class and exactly one B
     class — those two classes are paired.
 
-    Tier 1 (anchor, lockable): a globally unique string is an
-    extremely high-precision signal — it means the literal text
-    survived obfuscation in both builds and the only class on each
-    side that contains it must be the same logical class. Locking
-    this match prevents it from being displaced by weaker tier-2/3
-    matchers later.
+    Tier 2 with elevated confidence (0.95): a globally unique
+    string is high precision but not perfect — some shared strings
+    are coincidental boilerplate that ends up unique by accident.
+    Keeping at tier 2 lets the cleanup pass revoke pairs that
+    don't pass neighbour-consistency.
     """
-    id = "unique_string"; tier = 1
+    id = "unique_string"; tier = 2
 
     def propose(self, a, b):
         sA = defaultdict(list); sB = defaultdict(list)
