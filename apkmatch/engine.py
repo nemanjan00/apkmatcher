@@ -24,6 +24,45 @@ from typing import Optional
 from .mapping import EpochChurn, MutableMapping
 from .matchers import Candidate, DEFAULT_MATCHERS
 from .project import InMemoryProject
+
+
+def _substitute_record(rec: dict, mapping) -> dict:
+    """Return a copy of `rec` with every LX-namespace reference
+    substituted through `mapping` (a dict-like `get(a) -> b`). Used
+    by the two-pass engine: after first-pass convergence, every
+    mapped LX ref in A's records can be rewritten to its B-side
+    image, giving tier-2 matchers the same view of A and B."""
+    def sub(x: str) -> str:
+        if not x or not x.startswith("LX/"):
+            return x
+        return mapping.get(x) or x
+
+    def sub_sig(sig: str) -> str:
+        out = []; i = 0
+        while i < len(sig):
+            c = sig[i]
+            if c == "L":
+                e = sig.find(";", i)
+                if e == -1: out.append(sig[i:]); break
+                ref = sig[i:e+1]
+                out.append(sub(ref))
+                i = e + 1; continue
+            out.append(c); i += 1
+        return "".join(out)
+
+    new = dict(rec)
+    if rec.get("super"): new["super"] = sub(rec["super"])
+    new["impls"] = [sub(x) for x in rec.get("impls", ())]
+    new["calls"] = sorted({sub(x) for x in rec.get("calls", ())})
+    new["facc"]  = sorted({sub(x) for x in rec.get("facc",  ())})
+    new["trefs"] = sorted({sub(x) for x in rec.get("trefs", ())})
+    new["anns"]  = [sub(x) for x in rec.get("anns", ())]
+    new["sigs"]  = [sub_sig(s) for s in rec.get("sigs", ())]
+    new["field_types"] = [sub_sig(t) for t in rec.get("field_types", ())]
+    new["call_targets"] = [(sub(c), n) for c, n in rec.get("call_targets", ())]
+    new["field_targets"] = [(sub(c), n) for c, n in rec.get("field_targets", ())]
+    new["line_refs"] = [(ln, sub(c)) for ln, c in rec.get("line_refs", ())]
+    return new
 from .validators import (
     DEFAULT_VALIDATORS, MappingReader, Score, aggregate,
 )
@@ -249,6 +288,46 @@ class Engine:
         if self.validators:
             _log(f"=== validator pass (final) ===")
             self._validate_all("final")
+
+        # Two-pass: rebuild A with LX refs substituted, re-run tier-2
+        # matchers on the substituted view. Tier-2 matchers (string
+        # set, stable-refs multiset, call-target multiset) ignore
+        # mapping; after substitution, A's refs become B-side names
+        # so any cross-build collision that was previously masked by
+        # rotation now hashes identically.
+        if len(self.mapping) > 0:
+            _log(f"=== two-pass: substituting A through mapping and re-running tier-2 ===")
+            t0 = time.time()
+            class _MapView:
+                def __init__(self, m): self._m = m
+                def get(self, k): return self._m.get(k)
+            sub_records = [_substitute_record(r, _MapView(self.mapping))
+                           for r in self.a.classes()]
+            from .project import InMemoryProject as _IMP
+            sub_a = _IMP(sub_records)
+            _log(f"  substituted A in {time.time()-t0:.1f}s")
+            # Save original A and run tier-2 matchers against substituted A.
+            orig_a = self.a
+            self.a = sub_a
+            # Only run matchers whose fingerprints actually CHANGE after
+            # substitution — string/native-symbol matchers won't behave
+            # differently on substituted records.
+            second_pass_ids = {
+                "stable_refs_ms", "stable_refs_set", "strings_plus_refs",
+                "call_targets_ms", "field_targets_ms",
+                "fqn_stable",
+            }
+            tier2_only = [m for m in self.matchers
+                          if getattr(m, "tier", 2) == 2
+                          and getattr(m, "id", "") in second_pass_ids]
+            _log(f"  running {len(tier2_only)} tier-2 matchers on substituted view")
+            for m in tier2_only:
+                self._run_matcher(m)
+            self.a = orig_a
+
+            if self.validators:
+                _log(f"=== validator pass (post two-pass) ===")
+                self._validate_all("post-twopass")
 
         return RunResult(
             epochs=self.mapping.epoch,
