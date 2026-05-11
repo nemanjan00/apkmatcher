@@ -219,6 +219,7 @@ def parse_class(path: str, bucket: str) -> dict | None:
     # ("X.foo calls Y.bar; if Y maps to Y' then X.foo' should call Y'.bar'").
     methods: list[dict] = []
     cur_calls: list[tuple[str, str]] = []
+    cur_calls_full: list[tuple[str, str]] = []  # (class, full method sig)
     cur_facc: list[tuple[str, str]] = []
     cur_strings: list[str] = []
     cur_n_branches = 0
@@ -261,11 +262,13 @@ def parse_class(path: str, bucket: str) -> dict | None:
                 methods.append({
                     "sig": cur_sig, "name": cur_method_name,
                     "native": cur_is_native, "bh": h, "bha": bh_anon,
-                    "calls": cur_calls, "facc": cur_facc,
+                    "calls": cur_calls, "calls_full": cur_calls_full,
+                    "facc": cur_facc,
                     "strs": cur_strings, "br": cur_n_branches,
                 })
                 in_method = False
-                cur_body = []; cur_calls = []; cur_facc = []
+                cur_body = []; cur_calls = []; cur_calls_full = []
+                cur_facc = []
                 cur_strings = []; cur_n_branches = 0
                 continue
             if line.startswith(P_CSTR):
@@ -288,11 +291,16 @@ def parse_class(path: str, bucket: str) -> dict | None:
                         cls = line[sp+1:arrow]
                         if cls.startswith("L") and cls.endswith(";"):
                             calls.add(cls)
-                            paren = line.find("(", arrow + 2)
-                            if paren != -1:
-                                mname = line[arrow+2:paren]
-                                call_targets.append((cls, mname))
-                                cur_calls.append((cls, mname))
+                            # Full method signature (name+params+return).
+                            # Required to avoid confusing overloaded
+                            # methods with the same name but different
+                            # parameter lists.
+                            full_sig = line[arrow+2:].split()[0]
+                            paren = full_sig.find("(")
+                            mname = full_sig[:paren] if paren != -1 else full_sig
+                            call_targets.append((cls, mname))
+                            cur_calls.append((cls, mname))
+                            cur_calls_full.append((cls, full_sig))
                             if not cls.startswith("LX/") and cur_line:
                                 line_refs.append((cur_line, cls))
                 cur_body.append(_normalize_op(line))
@@ -357,7 +365,8 @@ def parse_class(path: str, bucket: str) -> dict | None:
             nm += 1
             in_method = True
             cur_body = []
-            cur_calls = []; cur_facc = []; cur_strings = []
+            cur_calls = []; cur_calls_full = []; cur_facc = []
+            cur_strings = []
             cur_n_branches = 0
             tail = line[len(P_METHOD):]
             cur_is_native = " native " in (" " + tail + " ")
@@ -370,7 +379,9 @@ def parse_class(path: str, bucket: str) -> dict | None:
                 native_syms.append(cur_method_name)
                 methods.append({
                     "sig": sig, "name": cur_method_name, "native": True,
-                    "bh": "", "calls": [], "facc": [], "strs": [], "br": 0,
+                    "bh": "", "bha": "",
+                    "calls": [], "calls_full": [], "facc": [],
+                    "strs": [], "br": 0,
                 })
                 in_method = False  # native methods have no body
             # Pull type refs out of the signature.

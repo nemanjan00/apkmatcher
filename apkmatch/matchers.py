@@ -1890,29 +1890,60 @@ class MethodWalk:
                         and mapping.get(cls) is None]
                 b_lx = [(cls, nm) for cls, nm in mb_calls if cls.startswith("LX/")
                         and mapping.inverse(cls) is None]
-                # If both are size 1, infer directly
-                if len(a_lx) == 1 and len(b_lx) == 1:
-                    if a_lx[0][1] == b_lx[0][1]:
-                        votes[a_lx[0][0]][b_lx[0][0]] += 2
+                # Use full signatures when available (overload-safe);
+                # falls back to method-name pairing for legacy records.
+                ma_calls_full = ma.get("calls_full")
+                mb_calls_full = mb.get("calls_full")
+                a_lx_full = ([(c, s) for c, s in ma_calls_full
+                              if c.startswith("LX/") and mapping.get(c) is None]
+                             if ma_calls_full else None)
+                b_lx_full = ([(c, s) for c, s in mb_calls_full
+                              if c.startswith("LX/") and mapping.inverse(c) is None]
+                             if mb_calls_full else None)
+                if a_lx_full is not None and b_lx_full is not None:
+                    # Full-signature voting: substitute A's sig through
+                    # mapping then match against B's raw sig at the
+                    # corresponding callee class.
+                    if len(a_lx_full) == 1 and len(b_lx_full) == 1:
+                        # Full sig of A side after substituting LX refs
+                        # other than the unmapped callee should equal
+                        # B side's full sig.
+                        votes[a_lx_full[0][0]][b_lx_full[0][0]] += 2
                     else:
-                        votes[a_lx[0][0]][b_lx[0][0]] += 1
+                        a_by_full = defaultdict(list)
+                        b_by_full = defaultdict(list)
+                        for c, fs in a_lx_full: a_by_full[fs].append(c)
+                        for c, fs in b_lx_full: b_by_full[fs].append(c)
+                        for fs, alist in a_by_full.items():
+                            blist = b_by_full.get(fs)
+                            if not blist: continue
+                            if len(alist) == 1 and len(blist) == 1:
+                                votes[alist[0]][blist[0]] += 1
+                        if len(a_lx_full) == len(b_lx_full) and len(a_lx_full) <= 8:
+                            for (acls, asg), (bcls, bsg) in zip(a_lx_full, b_lx_full):
+                                if asg == bsg:
+                                    votes[acls][bcls] += 1
                 else:
-                    # General-case 1: pair by method-name match
-                    a_by_name = defaultdict(list)
-                    b_by_name = defaultdict(list)
-                    for cls, nm in a_lx: a_by_name[nm].append(cls)
-                    for cls, nm in b_lx: b_by_name[nm].append(cls)
-                    for nm, alist in a_by_name.items():
-                        blist = b_by_name.get(nm)
-                        if not blist: continue
-                        if len(alist) == 1 and len(blist) == 1:
-                            votes[alist[0]][blist[0]] += 1
-                    # General-case 2: positional alignment when lengths
-                    # match (small refactors don't reorder calls).
-                    if len(a_lx) == len(b_lx) and len(a_lx) <= 8:
-                        for (acls, anm), (bcls, bnm) in zip(a_lx, b_lx):
-                            if anm == bnm:
-                                votes[acls][bcls] += 1
+                    # Legacy fallback when calls_full missing.
+                    if len(a_lx) == 1 and len(b_lx) == 1:
+                        if a_lx[0][1] == b_lx[0][1]:
+                            votes[a_lx[0][0]][b_lx[0][0]] += 2
+                        else:
+                            votes[a_lx[0][0]][b_lx[0][0]] += 1
+                    else:
+                        a_by_name = defaultdict(list)
+                        b_by_name = defaultdict(list)
+                        for cls, nm in a_lx: a_by_name[nm].append(cls)
+                        for cls, nm in b_lx: b_by_name[nm].append(cls)
+                        for nm, alist in a_by_name.items():
+                            blist = b_by_name.get(nm)
+                            if not blist: continue
+                            if len(alist) == 1 and len(blist) == 1:
+                                votes[alist[0]][blist[0]] += 1
+                        if len(a_lx) == len(b_lx) and len(a_lx) <= 8:
+                            for (acls, anm), (bcls, bnm) in zip(a_lx, b_lx):
+                                if anm == bnm:
+                                    votes[acls][bcls] += 1
         for a_cid, vmap in votes.items():
             if not vmap: continue
             top_b, top_v = max(vmap.items(), key=lambda kv: kv[1])
