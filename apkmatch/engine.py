@@ -374,12 +374,11 @@ class Engine:
             if gained < 50:
                 break
 
-        # Final cleanup after two-pass: two-pass can introduce weak
-        # pairs based on substituted refs that don't satisfy
-        # neighbour consistency in the original view. Iterate twice
-        # (revoking a pair removes evidence supporting other weak
-        # pairs); empirically 2 rounds picks up another small lift
-        # without the over-revocation that 3+ rounds causes.
+        # Post-two-pass cleanup: more conservative (min_mapped=3 here,
+        # vs min_mapped=2 in the first cleanup). Two-pass legitimately
+        # finds matches via substituted refs; we shouldn't revoke
+        # them too eagerly while their full neighbour graph hasn't
+        # caught up.
         for cleanup_round in range(1):
             _log(f"=== neighbour-consistency cleanup post-twopass r{cleanup_round+1} ===")
             revoked = 0
@@ -389,7 +388,8 @@ class Engine:
                 a_nbs = list(self.a.neighbours(a))
                 mapped_nbs = [self.mapping.get(n) for n in a_nbs
                               if self.mapping.get(n) is not None]
-                if len(mapped_nbs) < 2:
+                # Conservative threshold post-two-pass (min=3).
+                if len(mapped_nbs) < 3:
                     continue
                 b_nbs = set(self.b.neighbours(b))
                 hits = sum(1 for x in mapped_nbs if x in b_nbs)
