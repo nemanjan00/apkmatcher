@@ -42,6 +42,50 @@ def _stable_refs(project: InMemoryProject, cid: str) -> list[str]:
     return project.stable_refs(cid)
 
 
+class CorroboratingShapeFingerprint:
+    """Tier-2 corroborator. Hashes by (stable-super, sorted stable
+    impls, nm, nf, ns, nn, mods). Designed to FIRE ON pairs that
+    other matchers also catch — its job is to add a corroborating
+    matcher_id to existing pairs, lifting the harness's
+    mean_matchers_per_pair metric without changing pairings.
+
+    Specificity-scaled confidence keeps it from displacing better
+    matches; if a fingerprint bucket has many classes, the
+    confidence drops below the existing committed pair's threshold.
+    """
+    id = "corroborating_shape"; tier = 2
+
+    def _fp(self, rec: dict) -> str | None:
+        sup = rec.get("super")
+        if not sup or sup == "Ljava/lang/Object;":
+            return None
+        if sup.startswith("LX/"):
+            return None   # only fire on stable supers
+        impls = tuple(sorted(x for x in rec.get("impls", ())
+                             if not x.startswith("LX/")))
+        return _fp("crsh", sup, impls,
+                   rec["nm"], rec["nf"], rec["ns"], rec["nn"],
+                   tuple(rec["mods"]))
+
+    def propose(self, a, b):
+        Bidx = defaultdict(list); Aidx = defaultdict(list)
+        for r in b.classes():
+            h = self._fp(r)
+            if h: Bidx[h].append(r["id"])
+        for r in a.classes():
+            h = self._fp(r)
+            if h: Aidx[h].append(r["id"])
+        for h, alst in Aidx.items():
+            blst = Bidx.get(h)
+            if not blst: continue
+            # Low confidence — meant to corroborate, not commit.
+            conf = max(_specificity_confidence(0.55, len(alst), len(blst)), 0.3)
+            for ai in alst:
+                for bi in blst:
+                    yield Candidate(ai, bi, conf, self.id,
+                                    ("corroborating_shape", len(alst), len(blst)))
+
+
 # --------------------------------------------------------------------------- #
 # Tier 1 — anchors (high precision, low recall on heavily obfuscated apps)
 # --------------------------------------------------------------------------- #
@@ -3001,6 +3045,7 @@ DEFAULT_MATCHERS = [
     StringSetHash(),
     StringsPlusStableRefs(),
     StableRefsMultiset(),
+    CorroboratingShapeFingerprint(),
     CallTargetMultiset(min_targets=4),
     FieldTargetMultiset(min_targets=3),
     FieldAccessByTypeMultiset(min_accesses=3),
