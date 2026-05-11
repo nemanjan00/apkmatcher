@@ -138,7 +138,8 @@ since non-LX classes are free anchors that round-trip by FQN.
 | + full-sig MethodWalk + sig-position LX inference | 89.5 % | 88.5 % | 85.6 % | 100.0 % | 76.0 % | 21218 | 0.843 | 512 s |
 | + FieldPositionLXVote + ImplsPositionLXVote + SuperLXVote | 90.9 % | 90.0 % | 87.0 % | 100.0 % | 76.1 % | 21433 | 0.845 | 519 s |
 | + AnnsPositionLXVote + n=1 variants | 91.8 % | 91.0 % | 87.8 % | 100.0 % | 75.7 % | 21610 | 0.846 | 516 s |
-| + BodyLXSequenceVote (per-method body LX-sequence position vote) | **92.6 %** | **92.0 %** | **88.6 %** | **100.0 %** | 75.0 % | **21672** | **0.846** | 534 s |
+| + BodyLXSequenceVote (per-method body LX-sequence position vote) | 92.6 % | 92.0 % | 88.6 % | 100.0 % | 75.0 % | 21672 | 0.846 | 534 s |
+| + neighbour-consistency cleanup pass + UniqueString conf=0.95 | **92.3 %** | **91.6 %** | **88.4 %** | **100.0 %** | **76.8 %** | **21675** | **0.850** | 510 s |
 
 ## Status
 
