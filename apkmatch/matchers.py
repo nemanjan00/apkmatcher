@@ -816,6 +816,145 @@ class ExtendedByLockStep:
                             ("extended_by", len(mapped_children)))
 
 
+class MethodWalk:
+    """Tier-3 method-level graph walk.
+
+    For each confirmed class pair (A, A'), pair their methods by
+    substituted-signature equality, falling back to a greedy
+    best-match-by-call-set similarity. For each paired method
+    (M_a, M_a'), walk their per-method call lists in parallel:
+
+      For i in [0..min(len(calls_a), len(calls_a'))):
+          (cls_a, name_a) = M_a.calls[i]
+          (cls_b, name_b) = M_a'.calls[i]
+          if cls_a is unmatched LX, cls_b is unmatched LX, and the
+          method names are identical (or both obfuscated single
+          char), record an inference cls_a -> cls_b.
+
+    Tally inferences across all method-pairs in all confirmed
+    class-pairs. Propose pairs whose inference count is high and
+    whose runner-up is at least N votes lower.
+
+    This is the 'lambdas referenced in only one place' case the
+    user pointed out: a lambda L_a is only called from a single
+    method M of class C. If C maps to C' and M maps to M' (by
+    signature equality), and M' calls L_b at the same body
+    position, then L_a -> L_b is forced.
+    """
+    id = "method_walk"; tier = 3
+
+    def __init__(self, min_inferences: int = 2, min_margin: int = 1):
+        self.min_inferences = min_inferences
+        self.min_margin = min_margin
+
+    def _sub_sig(self, sig: str, mapping) -> str:
+        out = []; i = 0
+        while i < len(sig):
+            c = sig[i]
+            if c == "L":
+                e = sig.find(";", i)
+                if e == -1: out.append(sig[i:]); break
+                ref = sig[i:e+1]
+                if ref.startswith("LX/"):
+                    out.append(mapping.get(ref) or ref)
+                else:
+                    out.append(ref)
+                i = e + 1; continue
+            out.append(c); i += 1
+        return "".join(out)
+
+    def _pair_methods(self, ma_list, mb_list, mapping):
+        """Greedy method pairing within a confirmed class pair.
+        Pass 1: substituted-signature equality. Pass 2: best
+        remaining matches by (calls, facc) Jaccard. Returns list
+        of (ma, mb) pairs."""
+        out = []
+        b_by_sub_sig = defaultdict(list)
+        for mb in mb_list:
+            b_by_sub_sig[mb["sig"]].append(mb)
+        used_b = set()
+        leftover_a = []
+        for ma in ma_list:
+            sub = self._sub_sig(ma["sig"], mapping)
+            cands = b_by_sub_sig.get(sub, ())
+            picked = None
+            for mb in cands:
+                mid = id(mb)
+                if mid in used_b: continue
+                picked = mb; used_b.add(mid); break
+            if picked is not None:
+                out.append((ma, picked))
+            else:
+                leftover_a.append(ma)
+        # Greedy pass on leftovers
+        leftover_b = [mb for mb in mb_list if id(mb) not in used_b]
+        for ma in leftover_a:
+            ma_calls = set(map(tuple, ma["calls"]))
+            ma_facc = set(map(tuple, ma["facc"]))
+            best = None; best_s = 0.0
+            for mb in leftover_b:
+                if id(mb) in used_b: continue
+                mb_calls = set(map(tuple, mb["calls"]))
+                mb_facc = set(map(tuple, mb["facc"]))
+                u = (ma_calls | mb_calls); ix = (ma_calls & mb_calls)
+                jc = len(ix) / max(1, len(u))
+                u2 = (ma_facc | mb_facc); ix2 = (ma_facc & mb_facc)
+                jf = len(ix2) / max(1, len(u2))
+                s = 0.6 * jc + 0.4 * jf
+                if s > best_s:
+                    best_s = s; best = mb
+            if best is not None and best_s >= 0.5:
+                out.append((ma, best))
+                used_b.add(id(best))
+        return out
+
+    def propose(self, a, b, mapping):
+        votes: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        for a_cid, b_cid in mapping:
+            ra = a.get(a_cid); rb = b.get(b_cid)
+            if not ra or not rb: continue
+            ma_list = ra.get("methods", ())
+            mb_list = rb.get("methods", ())
+            if not ma_list or not mb_list: continue
+            pairs = self._pair_methods(ma_list, mb_list, mapping)
+            for ma, mb in pairs:
+                # Walk parallel call lists
+                ma_calls = ma.get("calls", ())
+                mb_calls = mb.get("calls", ())
+                # Pair by method-name equality + position proximity:
+                # multiset of LX callees per method.
+                a_lx = [(cls, nm) for cls, nm in ma_calls if cls.startswith("LX/")
+                        and mapping.get(cls) is None]
+                b_lx = [(cls, nm) for cls, nm in mb_calls if cls.startswith("LX/")
+                        and mapping.inverse(cls) is None]
+                # If both are size 1, infer directly
+                if len(a_lx) == 1 and len(b_lx) == 1:
+                    if a_lx[0][1] == b_lx[0][1]:
+                        votes[a_lx[0][0]][b_lx[0][0]] += 2
+                    else:
+                        votes[a_lx[0][0]][b_lx[0][0]] += 1
+                # General: pair by method-name match
+                else:
+                    a_by_name = defaultdict(list)
+                    b_by_name = defaultdict(list)
+                    for cls, nm in a_lx: a_by_name[nm].append(cls)
+                    for cls, nm in b_lx: b_by_name[nm].append(cls)
+                    for nm, alist in a_by_name.items():
+                        blist = b_by_name.get(nm)
+                        if not blist: continue
+                        if len(alist) == 1 and len(blist) == 1:
+                            votes[alist[0]][blist[0]] += 1
+        for a_cid, vmap in votes.items():
+            if not vmap: continue
+            top_b, top_v = max(vmap.items(), key=lambda kv: kv[1])
+            if top_v < self.min_inferences: continue
+            second = max((v for k, v in vmap.items() if k != top_b), default=0)
+            if top_v - second < self.min_margin: continue
+            conf = min(0.65 + 0.04 * (top_v - second), 0.92)
+            yield Candidate(a_cid, top_b, conf, self.id,
+                            ("method_walk", top_v, second))
+
+
 class DisambiguatingLockStep:
     """Tier-3, fallback when LockStep's intersection has 2-N candidates.
 
@@ -1335,6 +1474,7 @@ DEFAULT_MATCHERS = [
     LockStep(min_mapped=2),
     LockStep(min_mapped=1),
     DisambiguatingLockStep(min_mapped=3),
+    MethodWalk(min_inferences=2, min_margin=1),
     ReverseLockStep(min_mapped=4),
     ReverseLockStep(min_mapped=3),
     ReverseLockStep(min_mapped=2),
