@@ -132,7 +132,8 @@ since non-LX classes are free anchors that round-trip by FQN.
 | + AnonBodyHashMultiset (LX-stripped per-method body hashes) | 87.5 % | 86.2 % | 82.4 % | 100.0 % | 77.4 % | 20785 | 0.842 | 362 s |
 | + AnonBodyHashJaccard strict (m=5, j=0.85) + (m=3, j=0.95) | 87.6 % | 86.4 % | 82.5 % | 100.0 % | 77.5 % | 21024 | 0.842 | 421 s |
 | + FieldTypeSequenceSubstituted | 88.6 % | 87.4 % | 83.6 % | 100.0 % | 77.1 % | 20988 | 0.843 | 415 s |
-| + FieldTypeMultiset + MethodSigSubstitutedVote | **88.6 %** | **87.5 %** | **84.8 %** | **100.0 %** | 77.1 % | 21002 | **0.843** | 424 s |
+| + FieldTypeMultiset + MethodSigSubstitutedVote | 88.6 % | 87.5 % | 84.8 % | 100.0 % | 77.1 % | 21002 | 0.843 | 424 s |
+| + SiblingBySubstitutedSignatures + BestEffortContentMatch | **88.9 %** | **87.8 %** | **85.1 %** | **100.0 %** | 77.2 % | 21034 | **0.844** | 453 s |
 
 ## Status
 
