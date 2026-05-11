@@ -186,6 +186,11 @@ class Engine:
             if not prov and conf > cur_conf:
                 self.mapping._conf[a] = conf
                 boosted += 1
+                # Promote to locked when validators uniformly agree
+                # at high confidence — these pairs should be immune
+                # to displacement and re-evaluation.
+                if conf >= 0.85:
+                    self.mapping._locked.add(a)
             else:
                 kept += 1
         _log(f"  validators[{label}]: scored={len(pairs)} boosted={boosted} "
