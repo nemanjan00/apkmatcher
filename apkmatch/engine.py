@@ -306,21 +306,11 @@ class Engine:
             a_nbs = list(self.a.neighbours(a))
             mapped_nbs = [self.mapping.get(n) for n in a_nbs
                           if self.mapping.get(n) is not None]
-            if len(mapped_nbs) < 4:
+            if len(mapped_nbs) < 3:
                 continue
             b_nbs = set(self.b.neighbours(b))
             hits = sum(1 for x in mapped_nbs if x in b_nbs)
-            ratio = hits / len(mapped_nbs)
-            # Revoke if no overlap, OR if overlap is dismal AND
-            # the pair was committed by a weak matcher (only one
-            # matcher_id, low confidence).
-            cur_conf = self.mapping.confidence(a) or 0.0
-            n_matchers = len(set(self.mapping.matchers_for(a, b)))
-            should_revoke = (
-                hits == 0 or
-                (ratio < 0.1 and n_matchers <= 1 and cur_conf < 0.8)
-            )
-            if should_revoke:
+            if hits == 0:
                 self.mapping._a2b.pop(a, None)
                 self.mapping._b2a.pop(b, None)
                 self.mapping._conf.pop(a, None)
