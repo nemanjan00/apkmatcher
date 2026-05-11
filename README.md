@@ -143,7 +143,20 @@ since non-LX classes are free anchors that round-trip by FQN.
 | + post-two-pass cleanup pass | 91.6 % | 90.9 % | 87.7 % | 100.0 % | 77.8 % | 21664 | 0.851 | 583 s |
 | + second tier-3 sweep after first cleanup | 92.4 % | 91.7 % | 88.5 % | 100.0 % | 77.8 % | 21695 | 0.852 | 742 s |
 | + cleanup min_mapped 3 → 2 (both passes) | 92.1 % | 91.4 % | 88.2 % | 100.0 % | 78.7 % | 21694 | 0.854 | 821 s |
-| + BodyLXSequenceVote method-pair fallback via bha | **92.2 %** | **91.6 %** | **88.4 %** | **100.0 %** | 78.6 % | 21703 | **0.854** | 779 s |
+| + BodyLXSequenceVote method-pair fallback via bha | 92.2 % | 91.6 % | 88.4 % | 100.0 % | 78.6 % | 21703 | 0.854 | 779 s |
+
+## Plateau analysis
+
+Multiple post-0.854 attempts converged back to the same overall score. The harness `overall` weights:
+- `0.30 × precision` (pinned at 1.000)
+- `0.25 × neighbour_consistency` (0.786)
+- `0.15 × recall` (pinned at 1.000)
+- `0.20 × a_coverage` (0.922)
+- `0.10 × min(mean_matchers_per_pair / 5, 1.0)` (0.235)
+
+The headroom analysis: 86.3% of confirmed pairs have a single matcher supporting them; only 13.7% are corroborated by 2+ independent matchers. Pushing past 0.854 would require either:
+1. **More overlapping matchers** — pairs of matchers that fingerprint the same pairs through different lenses (most current matchers genuinely find different pairs).
+2. **A new content-independent signal source** — Proguard mapping file (out of scope), source-file proximity from apktool build artifacts, or per-method bytecode-after-substitution diff (would require retaining opcode lists per method, ~3-4× index size).
 
 ## Status
 
