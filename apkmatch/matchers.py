@@ -665,21 +665,24 @@ class BhaMethodVote:
     exactly). Body content is high-precision; high vote count is
     near-certain identity.
     """
-    id = "bha_method_vote"; tier = 2
+    id = "bha_method_vote"; tier = 3
 
     def __init__(self, min_votes: int = 3, min_ratio: float = 0.5):
         self.min_votes = min_votes
         self.min_ratio = min_ratio
 
-    def propose(self, a, b):
-        # B index: bha -> list of (b_class_id, method_count)
+    def propose(self, a, b, mapping):
         idx: dict[str, list[tuple[str, int]]] = defaultdict(list)
         for r in b.classes():
+            if mapping.inverse(r["id"]) is not None:
+                continue
             for m in r.get("methods", ()):
                 bha = m.get("bha", "")
                 if bha:
                     idx[bha].append((r["id"], r["nm"]))
         for r in a.classes():
+            if mapping.get(r["id"]) is not None:
+                continue
             ms = r.get("methods", ())
             bhas = [m.get("bha", "") for m in ms if m.get("bha")]
             if len(bhas) < self.min_votes: continue
@@ -1883,6 +1886,7 @@ DEFAULT_MATCHERS = [
     CallTargetWithSubstitution(min_targets=6),
     SiblingByMappedSuper(),
     SiblingByMappedSuperLoose(),
+    BhaMethodVote(min_votes=4, min_ratio=0.6),
     # SiblingByMappedInterfaces() — tried but regressed quality
     # (matches lambdas that look alike; LockStep already covers
     # the cases it gets right).
