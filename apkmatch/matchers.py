@@ -1776,6 +1776,23 @@ class MethodWalk:
         self.min_inferences = min_inferences
         self.min_margin = min_margin
 
+    def _extract_lx_refs(self, sig: str) -> list[tuple[int, str]]:
+        """Return list of (position, LX_ref) tuples for LX refs in sig."""
+        out = []; i = 0; pos = 0
+        while i < len(sig):
+            c = sig[i]
+            if c == "L":
+                e = sig.find(";", i)
+                if e == -1: break
+                ref = sig[i:e+1]
+                if ref.startswith("LX/"):
+                    out.append((pos, ref))
+                i = e + 1; pos += 1; continue
+            if c in "([":
+                i += 1; continue
+            i += 1; pos += 1
+        return out
+
     def _sub_sig(self, sig: str, mapping) -> str:
         out = []; i = 0
         while i < len(sig):
@@ -1881,6 +1898,18 @@ class MethodWalk:
             if not ma_list or not mb_list: continue
             pairs = self._pair_methods(ma_list, mb_list, mapping)
             for ma, mb in pairs:
+                # Signature-position LX inference: when two paired
+                # methods' signatures align at the same position with
+                # an unmapped LX on each side, vote for that pairing.
+                a_sig = ma.get("sig", ""); b_sig = mb.get("sig", "")
+                a_refs = self._extract_lx_refs(a_sig)
+                b_refs = self._extract_lx_refs(b_sig)
+                if len(a_refs) == len(b_refs) and len(a_refs) <= 6:
+                    for (ai, ar), (bi, br) in zip(a_refs, b_refs):
+                        if ai != bi: continue  # different position
+                        if mapping.get(ar) is not None: continue
+                        if mapping.inverse(br) is not None: continue
+                        votes[ar][br] += 1
                 # Walk parallel call lists
                 ma_calls = ma.get("calls", ())
                 mb_calls = mb.get("calls", ())
