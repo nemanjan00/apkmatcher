@@ -710,6 +710,81 @@ class PerMethodCallSet:
                             ("per_method_callset", top_v, second))
 
 
+class MethodSigSubstitutedVote:
+    """Tier-3. For each method in any A class, substitute LX type refs
+    in the method signature through the current mapping. Index B
+    methods by their raw signatures. For each unmatched A class,
+    tally B classes that contain methods with matching substituted
+    signatures. Propose top B class when vote count and margin
+    threshold met.
+
+    Different signal from MethodCallSetSubstituted (which fingerprints
+    by call set) and from BhaMethodVote (which fingerprints by body
+    hash). Signature-based pairing is robust when method bodies
+    changed but the API surface (param/return types) stayed.
+    """
+    id = "method_sig_sub_vote"; tier = 3
+
+    def __init__(self, min_votes: int = 3, min_ratio: float = 0.5):
+        self.min_votes = min_votes
+        self.min_ratio = min_ratio
+
+    def _sub_sig(self, sig: str, mapping) -> str | None:
+        out = []; i = 0
+        unresolved = 0
+        while i < len(sig):
+            c = sig[i]
+            if c == "L":
+                e = sig.find(";", i)
+                if e == -1: out.append(sig[i:]); break
+                ref = sig[i:e+1]
+                if ref.startswith("LX/"):
+                    m = mapping.get(ref)
+                    if m is None:
+                        unresolved += 1
+                        out.append(ref)
+                    else:
+                        out.append(m)
+                else:
+                    out.append(ref)
+                i = e + 1; continue
+            out.append(c); i += 1
+        return "".join(out), unresolved
+
+    def propose(self, a, b, mapping):
+        # Index B by raw signature -> list of B class ids
+        b_index: dict[str, list[str]] = defaultdict(list)
+        for r in b.classes():
+            if mapping.inverse(r["id"]) is not None: continue
+            for m in r.get("methods", ()):
+                sig = m.get("sig", "")
+                if sig:
+                    b_index[sig].append(r["id"])
+        for r in a.classes():
+            if mapping.get(r["id"]) is not None: continue
+            ms = r.get("methods", ())
+            sigs = [m.get("sig", "") for m in ms if m.get("sig")]
+            if len(sigs) < self.min_votes: continue
+            counts: dict[str, int] = defaultdict(int)
+            for sig in sigs:
+                sub_sig, unresolved = self._sub_sig(sig, mapping)
+                if unresolved > 0: continue  # only count resolved sigs
+                seen_b = set()
+                for bid in b_index.get(sub_sig, ()):
+                    if bid in seen_b: continue
+                    seen_b.add(bid)
+                    counts[bid] += 1
+            if not counts: continue
+            top_b, top_v = max(counts.items(), key=lambda kv: kv[1])
+            if top_v < self.min_votes: continue
+            if top_v / len(sigs) < self.min_ratio: continue
+            second = max((v for k, v in counts.items() if k != top_b), default=0)
+            if top_v - second < 1: continue
+            conf = min(0.7 + 0.05 * (top_v - second), 0.92)
+            yield Candidate(r["id"], top_b, conf, self.id,
+                            ("method_sig_sub_vote", top_v, second))
+
+
 class BhaMethodVote:
     """Tier 2. For each unmatched A class, look up each method's
     LX-stripped body hash (`bha`) in B's index. Tally votes for B
@@ -2087,6 +2162,7 @@ DEFAULT_MATCHERS = [
     SiblingByMappedSuper(),
     SiblingByMappedSuperLoose(),
     BhaMethodVote(min_votes=3, min_ratio=0.5),
+    MethodSigSubstitutedVote(min_votes=4, min_ratio=0.7),
     # SiblingByMappedInterfaces() — tried but regressed quality
     # (matches lambdas that look alike; LockStep already covers
     # the cases it gets right).
