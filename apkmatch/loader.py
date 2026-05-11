@@ -190,6 +190,11 @@ def parse_class(path: str, bucket: str) -> dict | None:
     super_ = None
     impls: list[str] = []
     mods: set[str] = set()
+    # Kotlin DebugMetadata annotation fields are the original class
+    # FQN and source filename — stable across builds because they're
+    # baked into the annotation literal strings.
+    kotlin_meta: list[str] = []
+    in_debug_metadata = False
     nf = nm = ns = nn = 0
     strings: list[str] = []
     anns: list[str] = []
@@ -426,9 +431,25 @@ def parse_class(path: str, bucket: str) -> dict | None:
                     trefs.add(ret)
             continue
         if line.startswith(P_ANN):
+            ann_class = None
             for tok in line.split():
                 if tok.startswith("L") and tok.endswith(";"):
+                    ann_class = tok
                     anns.append(tok); break
+            in_debug_metadata = (ann_class ==
+                                 "Lkotlin/coroutines/jvm/internal/DebugMetadata;")
+            continue
+        if line.startswith(".end annotation"):
+            in_debug_metadata = False
+            continue
+        if in_debug_metadata:
+            # Looking for `c = "kotlinx.coroutines.flow.SharedFlowImpl"`
+            # and `f = "SharedFlow.kt"` — both stable across R8 builds.
+            if line.startswith("c = \"") or line.startswith("f = \""):
+                key = line[0]
+                q1 = line.find('"'); q2 = line.rfind('"')
+                if q1 != -1 and q2 > q1:
+                    kotlin_meta.append(f"{key}={line[q1+1:q2]}")
             continue
 
     if cid is None:
@@ -447,6 +468,7 @@ def parse_class(path: str, bucket: str) -> dict | None:
         "methods": methods,
         "line_refs": line_refs,
         "field_types": field_types,  # list[str] in declaration order
+        "kotlin_meta": kotlin_meta,  # ['c=<FQN>', 'f=<filename>']
     }
 
 

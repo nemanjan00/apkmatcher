@@ -1404,6 +1404,38 @@ def _deobfuscated_fqns_from_strings(rec: dict) -> set[str]:
     return out
 
 
+class KotlinDebugMetadataFingerprint:
+    """Tier-1 anchor. Match by the `c` (original class FQN) and `f`
+    (source filename) fields of Kotlin's
+    `kotlin.coroutines.jvm.internal.DebugMetadata` annotation.
+
+    R8 cannot strip these literal string values because Kotlin reads
+    them at runtime for stack traces. They are essentially
+    ground-truth identity for coroutine continuation classes.
+    """
+    id = "kotlin_debug_metadata"; tier = 1
+
+    def _fp(self, rec: dict) -> str | None:
+        km = rec.get("kotlin_meta", ())
+        if not km: return None
+        return _fp("kdm", tuple(sorted(km)))
+
+    def propose(self, a, b):
+        Bidx = defaultdict(list)
+        for r in b.classes():
+            h = self._fp(r)
+            if h: Bidx[h].append(r["id"])
+        for r in a.classes():
+            h = self._fp(r)
+            if not h: continue
+            blst = Bidx.get(h)
+            if not blst: continue
+            conf = _specificity_confidence(0.97, 1, len(blst), 0.97)
+            for bid in blst:
+                yield Candidate(r["id"], bid, conf, self.id,
+                                ("kotlin_debug_metadata", len(blst)))
+
+
 class DeobfuscatedFQNFingerprint:
     """Tier-1 anchor. Match by the SET of de-obfuscated FQNs embedded
     in a class's literal strings.
@@ -2922,6 +2954,7 @@ DEFAULT_MATCHERS = [
     IdenticalStrings(),
     LongUniqueString(),
     DeobfuscatedFQNFingerprint(),
+    KotlinDebugMetadataFingerprint(),
 
     # ---- Tier 2: content fingerprints ---------------------------------
     UniqueString(),
