@@ -830,11 +830,12 @@ class MappedNeighbourFingerprint:
     Includes (super, sorted_impls, mods, nm, nf) shape constraint
     in the fingerprint to avoid over-matching tiny classes.
     """
-    id = "mapped_nb_fp"; tier = 3
+    tier = 3
 
     def __init__(self, min_neighbours: int = 3, min_mapped_ratio: float = 0.7):
         self.min_neighbours = min_neighbours
         self.min_mapped_ratio = min_mapped_ratio
+        self.id = f"mapped_nb_fp_n{min_neighbours}_r{int(min_mapped_ratio*10)}"
 
     def _sub_super(self, s, mapping):
         if not s or s == "Ljava/lang/Object;": return s
@@ -1571,6 +1572,7 @@ DEFAULT_MATCHERS = [
     LockStep(min_mapped=1),
     DisambiguatingLockStep(min_mapped=3),
     MappedNeighbourFingerprint(min_neighbours=3, min_mapped_ratio=0.7),
+    MappedNeighbourFingerprint(min_neighbours=2, min_mapped_ratio=0.5),
     MethodWalk(min_inferences=2, min_margin=1),
     ReverseLockStep(min_mapped=4),
     ReverseLockStep(min_mapped=3),
