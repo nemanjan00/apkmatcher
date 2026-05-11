@@ -140,7 +140,8 @@ since non-LX classes are free anchors that round-trip by FQN.
 | + AnnsPositionLXVote + n=1 variants | 91.8 % | 91.0 % | 87.8 % | 100.0 % | 75.7 % | 21610 | 0.846 | 516 s |
 | + BodyLXSequenceVote (per-method body LX-sequence position vote) | 92.6 % | 92.0 % | 88.6 % | 100.0 % | 75.0 % | 21672 | 0.846 | 534 s |
 | + neighbour-consistency cleanup pass + UniqueString conf=0.95 | 92.3 % | 91.6 % | 88.4 % | 100.0 % | 76.8 % | 21675 | 0.850 | 510 s |
-| + post-two-pass cleanup pass | **91.6 %** | **90.9 %** | **87.7 %** | **100.0 %** | **77.8 %** | **21664** | **0.851** | 583 s |
+| + post-two-pass cleanup pass | 91.6 % | 90.9 % | 87.7 % | 100.0 % | 77.8 % | 21664 | 0.851 | 583 s |
+| + second tier-3 sweep after first cleanup | **92.4 %** | **91.7 %** | **88.5 %** | **100.0 %** | 77.8 % | **21695** | **0.852** | 742 s |
 
 ## Status
 
