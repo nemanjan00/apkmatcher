@@ -308,12 +308,7 @@ class Engine:
                     continue
                 b_nbs = set(self.b.neighbours(b))
                 hits = sum(1 for x in mapped_nbs if x in b_nbs)
-                # Revoke on zero hits; also revoke when hits < 5% AND
-                # the pair was committed by a single weak matcher.
-                cur_conf = self.mapping.confidence(a) or 0.0
-                n_matchers = len(set(self.mapping.matchers_for(a, b)))
-                hit_ratio = hits / len(mapped_nbs)
-                if hits == 0 or (hit_ratio < 0.05 and n_matchers == 1 and cur_conf < 0.75):
+                if hits == 0:
                     self.mapping._a2b.pop(a, None)
                     self.mapping._b2a.pop(b, None)
                     self.mapping._conf.pop(a, None)
@@ -398,12 +393,7 @@ class Engine:
                     continue
                 b_nbs = set(self.b.neighbours(b))
                 hits = sum(1 for x in mapped_nbs if x in b_nbs)
-                # Revoke on zero hits; also revoke when hits < 5% AND
-                # the pair was committed by a single weak matcher.
-                cur_conf = self.mapping.confidence(a) or 0.0
-                n_matchers = len(set(self.mapping.matchers_for(a, b)))
-                hit_ratio = hits / len(mapped_nbs)
-                if hits == 0 or (hit_ratio < 0.05 and n_matchers == 1 and cur_conf < 0.75):
+                if hits == 0:
                     self.mapping._a2b.pop(a, None)
                     self.mapping._b2a.pop(b, None)
                     self.mapping._conf.pop(a, None)
