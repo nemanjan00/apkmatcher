@@ -221,6 +221,7 @@ def parse_class(path: str, bucket: str) -> dict | None:
     cur_calls: list[tuple[str, str]] = []
     cur_calls_full: list[tuple[str, str]] = []  # (class, full method sig)
     cur_facc: list[tuple[str, str]] = []
+    cur_facc_typed: list[tuple[str, str]] = []  # (class, field type)
     cur_strings: list[str] = []
     cur_n_branches = 0
     cur_line = 0
@@ -263,12 +264,12 @@ def parse_class(path: str, bucket: str) -> dict | None:
                     "sig": cur_sig, "name": cur_method_name,
                     "native": cur_is_native, "bh": h, "bha": bh_anon,
                     "calls": cur_calls, "calls_full": cur_calls_full,
-                    "facc": cur_facc,
+                    "facc": cur_facc, "facc_typed": cur_facc_typed,
                     "strs": cur_strings, "br": cur_n_branches,
                 })
                 in_method = False
                 cur_body = []; cur_calls = []; cur_calls_full = []
-                cur_facc = []
+                cur_facc = []; cur_facc_typed = []
                 cur_strings = []; cur_n_branches = 0
                 continue
             if line.startswith(P_CSTR):
@@ -316,8 +317,14 @@ def parse_class(path: str, bucket: str) -> dict | None:
                             colon = line.find(":", arrow + 2)
                             if colon != -1:
                                 fname = line[arrow+2:colon]
+                                # Field type after the colon — type is
+                                # stable across builds even when field
+                                # names rotate, so matchers preferring
+                                # robustness should key on type.
+                                ftype = line[colon+1:].split()[0]
                                 field_targets.append((cls, fname))
                                 cur_facc.append((cls, fname))
+                                cur_facc_typed.append((cls, ftype))
                 cur_body.append(_normalize_op(line))
                 continue
             if line.startswith("if-") or line.startswith("packed-switch") \
@@ -366,6 +373,7 @@ def parse_class(path: str, bucket: str) -> dict | None:
             in_method = True
             cur_body = []
             cur_calls = []; cur_calls_full = []; cur_facc = []
+            cur_facc_typed = []
             cur_strings = []
             cur_n_branches = 0
             tail = line[len(P_METHOD):]
@@ -380,7 +388,7 @@ def parse_class(path: str, bucket: str) -> dict | None:
                 methods.append({
                     "sig": sig, "name": cur_method_name, "native": True,
                     "bh": "", "bha": "",
-                    "calls": [], "calls_full": [], "facc": [],
+                    "calls": [], "calls_full": [], "facc": [], "facc_typed": [],
                     "strs": [], "br": 0,
                 })
                 in_method = False  # native methods have no body

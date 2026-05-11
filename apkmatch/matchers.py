@@ -621,6 +621,48 @@ class CallTargetWithSubstitution:
                                 ("call_targets_sub", len(blst)))
 
 
+class FieldAccessByTypeMultiset:
+    """Tier-2. Multiset of (stable_target_class, field_type) tuples
+    extracted from all method bodies in the class. Unlike
+    FieldTargetMultiset which uses field NAMES (rotated by R8),
+    this matcher keys on field TYPES which survive obfuscation.
+
+    Only stable target classes count (rotated LX targets don't
+    cross-version-match by themselves).
+    """
+    id = "field_access_by_type_ms"; tier = 2
+
+    def __init__(self, min_accesses: int = 3):
+        self.min_accesses = min_accesses
+
+    def _fp(self, rec: dict) -> str | None:
+        ts = []
+        for m in rec.get("methods", ()):
+            for cls, ftype in m.get("facc_typed", ()):
+                if not cls.startswith("LX/"):
+                    ts.append((cls, ftype))
+        ts = sorted(set(ts))
+        if len(ts) < self.min_accesses: return None
+        return _fp("fatm", ts)
+
+    def propose(self, a, b):
+        Bbk = defaultdict(list); Abk = defaultdict(list)
+        for r in b.classes():
+            h = self._fp(r)
+            if h: Bbk[h].append(r["id"])
+        for r in a.classes():
+            h = self._fp(r)
+            if h: Abk[h].append(r["id"])
+        for h, alst in Abk.items():
+            blst = Bbk.get(h)
+            if not blst: continue
+            conf = _specificity_confidence(0.85, len(alst), len(blst))
+            for ai in alst:
+                for bi in blst:
+                    yield Candidate(ai, bi, conf, self.id,
+                                    ("field_access_by_type", len(alst), len(blst)))
+
+
 class FieldTargetMultiset:
     """Multiset of stable-only (class, field-name) accesses. Same idea
     as CallTargetMultiset for field reads/writes."""
@@ -2683,6 +2725,7 @@ DEFAULT_MATCHERS = [
     StableRefsMultiset(),
     CallTargetMultiset(min_targets=4),
     FieldTargetMultiset(min_targets=3),
+    FieldAccessByTypeMultiset(min_accesses=3),
     EnumValueNames(),
     EnumValueNamesJaccard(min_jaccard=0.7, min_overlap=2),
     AnonBodyHashMultiset(min_methods=2),
