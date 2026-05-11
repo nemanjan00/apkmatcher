@@ -319,13 +319,6 @@ class Engine:
             if revoked == 0:
                 break
 
-        # Post-cleanup validator pass: recalibrate confidences and
-        # promote anything that now passes the lock threshold so it
-        # survives subsequent tier-3 churn.
-        if self.validators:
-            _log(f"=== validator pass (post-cleanup) ===")
-            self._validate_all("post-cleanup")
-
         # Second tier-3 pass after cleanup: the revoked pairs left
         # gaps that tier-3 matchers might fill correctly now that
         # noise has been removed. Short-circuit if no churn.
