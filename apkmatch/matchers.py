@@ -1382,16 +1382,22 @@ def _source_files_from_strings(rec: dict) -> set[str]:
 import re
 
 _COMPOSE_FQN_RE = re.compile(
-    r'\b((?:com|org|net|io|androidx|kotlin|java|javax)\.[a-zA-Z][\w.$]*[\w$])(?=\s*\()'
+    r'\b((?:com|org|net|io|androidx|kotlin|java|javax)'
+    r'\.[a-zA-Z][\w.$]*[\w$])'
+    r'(?:\.<[\w$]+>)?'   # optional `.<anonymous>` / `.<init>` / etc.
+    r'(?=\s*\()'
 )
 
 
 def _deobfuscated_fqns_from_strings(rec: dict) -> set[str]:
     """Pull dotted class names out of literal strings — Kotlin/Compose
-    embeds them in stack-trace / debug-metadata strings like
-    `com.instagram.foo.Bar (Bar.kt:42)`. The class name is the
-    original (pre-obfuscation) identifier, which is preserved
-    across builds.
+    embeds them in stack-trace / debug-metadata strings like:
+      `com.instagram.foo.Bar (Bar.kt:42)`
+      `com.foo.Bar.<anonymous> (Bar.kt:97)`
+      `com.foo.Bar$lambda$0 (Bar.kt:50)`
+    The class name is the original (pre-obfuscation) identifier,
+    preserved across builds. We strip trailing `.<anonymous>` etc.
+    so different lambdas from the same source class group together.
     """
     out = set()
     for s in rec.get("strings", ()):
