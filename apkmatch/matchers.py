@@ -868,6 +868,71 @@ class ExtendedByLockStep:
                             ("extended_by", len(mapped_children)))
 
 
+class SymmetricNeighbourFingerprint:
+    """Tier-3. Like MappedNeighbourFingerprint but the multiset includes
+    BOTH outgoing AND incoming mapped neighbours.
+
+    Some classes (markers, base interfaces) have few outgoing edges
+    but many incoming edges; the inverse holds for utility singletons.
+    Combining both directions in a single fingerprint catches both
+    populations.
+    """
+    tier = 3
+
+    def __init__(self, min_neighbours: int = 4, min_mapped_ratio: float = 0.6):
+        self.min_neighbours = min_neighbours
+        self.min_mapped_ratio = min_mapped_ratio
+        self.id = f"sym_nb_fp_n{min_neighbours}_r{int(min_mapped_ratio*10)}"
+
+    def _fp_a(self, project, ra: dict, mapping):
+        cid = ra["id"]
+        fwd = list(project.neighbours(cid))
+        rev = list(project.reverse_neighbours(cid))
+        all_nbs = sorted(set(fwd)) + sorted(set(rev))
+        if len(all_nbs) < self.min_neighbours: return None
+        sub = []; mapped = 0
+        for n in all_nbs:
+            if n.startswith("LX/"):
+                m = mapping.get(n)
+                if m is None: continue
+                sub.append(m); mapped += 1
+            else:
+                sub.append(n); mapped += 1
+        if mapped / len(all_nbs) < self.min_mapped_ratio:
+            return None
+        # Tag forward vs reverse so direction matters in the hash.
+        n_fwd_sub = sum(1 for n in fwd if (not n.startswith("LX/")) or mapping.get(n))
+        return _fp("snf", tuple(sub), n_fwd_sub, ra["nm"], ra["nf"], tuple(ra["mods"]))
+
+    def _fp_b(self, project, rb: dict):
+        cid = rb["id"]
+        fwd = list(project.neighbours(cid))
+        rev = list(project.reverse_neighbours(cid))
+        all_nbs = sorted(set(fwd)) + sorted(set(rev))
+        if len(all_nbs) < self.min_neighbours: return None
+        return _fp("snf", tuple(all_nbs), len(set(fwd)), rb["nm"], rb["nf"],
+                   tuple(rb["mods"]))
+
+    def propose(self, a, b, mapping):
+        Bidx = defaultdict(list)
+        for r in b.classes():
+            if not r["id"].startswith("LX/"): continue
+            if mapping.inverse(r["id"]) is not None: continue
+            h = self._fp_b(b, r)
+            if h: Bidx[h].append(r["id"])
+        for r in a.classes():
+            if not r["id"].startswith("LX/"): continue
+            if mapping.get(r["id"]) is not None: continue
+            h = self._fp_a(a, r, mapping)
+            if not h: continue
+            blst = Bidx.get(h)
+            if not blst: continue
+            conf = _specificity_confidence(0.85, 1, len(blst))
+            for bid in blst:
+                yield Candidate(r["id"], bid, conf, self.id,
+                                ("sym_nb_fp", len(blst)))
+
+
 class MappedNeighbourFingerprint:
     """Tier-3. For each unmatched A class, build a sorted multiset of
     its outgoing neighbours after mapping substitution. For B side,
@@ -1632,6 +1697,7 @@ DEFAULT_MATCHERS = [
     DisambiguatingLockStep(min_mapped=3),
     MappedNeighbourFingerprint(min_neighbours=3, min_mapped_ratio=0.7),
     MappedNeighbourFingerprint(min_neighbours=2, min_mapped_ratio=0.5),
+    SymmetricNeighbourFingerprint(min_neighbours=4, min_mapped_ratio=0.6),
     MethodWalk(min_inferences=2, min_margin=1),
     ReverseLockStep(min_mapped=4),
     ReverseLockStep(min_mapped=3),
