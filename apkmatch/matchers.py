@@ -816,6 +816,102 @@ class ExtendedByLockStep:
                             ("extended_by", len(mapped_children)))
 
 
+class MappedNeighbourFingerprint:
+    """Tier-3. For each unmatched A class, build a sorted multiset of
+    its outgoing neighbours after mapping substitution. For B side,
+    use the raw outgoing neighbours. If the multisets match exactly
+    (and the class shape agrees), propose.
+
+    Catches the case 'all my refs are mapped, just find the B class
+    with matching mapped-target set'. Targets the ~4500 unmatched
+    classes whose every reference resolves through the mapping but
+    whose own identity isn't pinnable by other tier-3 matchers.
+
+    Includes (super, sorted_impls, mods, nm, nf) shape constraint
+    in the fingerprint to avoid over-matching tiny classes.
+    """
+    id = "mapped_nb_fp"; tier = 3
+
+    def __init__(self, min_neighbours: int = 3, min_mapped_ratio: float = 0.7):
+        self.min_neighbours = min_neighbours
+        self.min_mapped_ratio = min_mapped_ratio
+
+    def _sub_super(self, s, mapping):
+        if not s or s == "Ljava/lang/Object;": return s
+        if s.startswith("LX/"): return mapping.get(s) or s
+        return s
+
+    def _sub_impls(self, impls, mapping):
+        out = []
+        for x in impls:
+            if x.startswith("LX/"):
+                m = mapping.get(x)
+                if m is None: return None
+                out.append(m)
+            else:
+                out.append(x)
+        return tuple(sorted(out))
+
+    def _fp_a(self, ra: dict, mapping):
+        nbs = sorted(set(ra["calls"] + ra["facc"] + ra["trefs"]))
+        if len(nbs) < self.min_neighbours: return None
+        # Substitute LX refs through mapping. Skip if too many unmapped.
+        sub = []; mapped = 0
+        for n in nbs:
+            if n.startswith("LX/"):
+                m = mapping.get(n)
+                if m is None: continue
+                sub.append(m); mapped += 1
+            else:
+                sub.append(n); mapped += 1
+        if mapped / len(nbs) < self.min_mapped_ratio:
+            return None
+        sub_sorted = tuple(sorted(set(sub)))
+        if len(sub_sorted) < self.min_neighbours:
+            return None
+        impls = self._sub_impls(ra.get("impls", ()), mapping)
+        if impls is None: impls = ()
+        return _fp("mnf",
+                   sub_sorted,
+                   self._sub_super(ra.get("super"), mapping),
+                   impls,
+                   ra["nm"], ra["nf"], ra["nn"],
+                   tuple(ra["mods"]))
+
+    def _fp_b(self, rb: dict):
+        nbs = sorted(set(rb["calls"] + rb["facc"] + rb["trefs"]))
+        if len(nbs) < self.min_neighbours: return None
+        return _fp("mnf",
+                   tuple(nbs),
+                   rb.get("super") or "",
+                   tuple(sorted(rb.get("impls", ()))),
+                   rb["nm"], rb["nf"], rb["nn"],
+                   tuple(rb["mods"]))
+
+    def propose(self, a, b, mapping):
+        Bidx = defaultdict(list)
+        for r in b.classes():
+            if not r["id"].startswith("LX/"):
+                continue
+            if mapping.inverse(r["id"]) is not None:
+                continue
+            h = self._fp_b(r)
+            if h: Bidx[h].append(r["id"])
+        for r in a.classes():
+            if not r["id"].startswith("LX/"):
+                continue
+            if mapping.get(r["id"]) is not None:
+                continue
+            h = self._fp_a(r, mapping)
+            if not h: continue
+            blst = Bidx.get(h)
+            if not blst: continue
+            conf = _specificity_confidence(0.85, 1, len(blst))
+            for bid in blst:
+                yield Candidate(r["id"], bid, conf, self.id,
+                                ("mapped_nb_fp", len(blst)))
+
+
 class MethodWalk:
     """Tier-3 method-level graph walk.
 
@@ -1474,6 +1570,7 @@ DEFAULT_MATCHERS = [
     LockStep(min_mapped=2),
     LockStep(min_mapped=1),
     DisambiguatingLockStep(min_mapped=3),
+    MappedNeighbourFingerprint(min_neighbours=3, min_mapped_ratio=0.7),
     MethodWalk(min_inferences=2, min_margin=1),
     ReverseLockStep(min_mapped=4),
     ReverseLockStep(min_mapped=3),

@@ -122,7 +122,10 @@ since non-LX classes are free anchors that round-trip by FQN.
 | + sibling_loose + WeightedNeighbourVote n=4 + n=2 | 72.7 % | 69.9 % | 69.9 % | 99.2 % | 77.4 % | 14790 | 0.811 | 152 s |
 | + LockStep n=2, ReverseLockStep n=2, ImplementedBy n=2 | 76.6 % | 73.9 % | 70.6 % | 99.1 % | 78.4 % | 15481 | 0.819 | 185 s |
 | + n=1 LockStep variants (single mapped neighbour) | 81.4 % | 79.2 % | 75.7 % | 99.1 % | 78.8 % | 16795 | 0.830 | 228 s |
-| + cross-namespace guard (stable<->stable must FQN-match) | 81.1 % | 79.1 % | 75.6 % | **100.0 %** | **79.0 %** | 16777 | **0.833** | 227 s |
+| + cross-namespace guard (stable<->stable must FQN-match) | 81.1 % | 79.1 % | 75.6 % | 100.0 % | 79.0 % | 16777 | 0.833 | 227 s |
+| + DisambiguatingLockStep | 81.4 % | 79.4 % | 75.9 % | 100.0 % | 79.1 % | 16780 | 0.833 | 259 s |
+| + MethodWalk (per-method graph walk) | 83.2 % | 81.4 % | 77.8 % | 100.0 % | 76.8 % | 17233 | 0.831 | 279 s |
+| + MappedNeighbourFingerprint | **84.0 %** | **82.2 %** | **78.6 %** | **100.0 %** | 77.4 % | **17641** | **0.834** | 338 s |
 
 ## Status
 
