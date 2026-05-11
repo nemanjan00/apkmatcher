@@ -293,31 +293,44 @@ class Engine:
 
         # Neighbour-consistency cleanup. For each non-locked confirmed
         # pair, compute the fraction of A's matched outgoing neighbours
-        # whose B-side partner is also a neighbour of B. If zero AND
-        # the pair has more than min_matched_neighbours mapped
-        # neighbours to check, revoke. This filters out pairs that
-        # were committed by weak signals but are inconsistent with
-        # the surrounding graph.
-        _log(f"=== neighbour-consistency cleanup ===")
-        revoked = 0
-        for a, b in list(self.mapping):
-            if self.mapping.is_locked(a):
-                continue
-            a_nbs = list(self.a.neighbours(a))
-            mapped_nbs = [self.mapping.get(n) for n in a_nbs
-                          if self.mapping.get(n) is not None]
-            if len(mapped_nbs) < 3:
-                continue
-            b_nbs = set(self.b.neighbours(b))
-            hits = sum(1 for x in mapped_nbs if x in b_nbs)
-            if hits == 0:
-                self.mapping._a2b.pop(a, None)
-                self.mapping._b2a.pop(b, None)
-                self.mapping._conf.pop(a, None)
-                self.mapping._matchers.pop((a, b), None)
-                self.mapping.mark_negative(a, b)
-                revoked += 1
-        _log(f"  neighbour-consistency cleanup: revoked {revoked} pairs")
+        # whose B-side partner is also a neighbour of B. If zero with
+        # 3+ mapped neighbours to check, revoke. Also check reverse
+        # neighbours (incoming edges) similarly. Iterate until fixpoint
+        # — revoking a pair may invalidate other pairs that relied on it.
+        for cleanup_round in range(5):
+            _log(f"=== neighbour-consistency cleanup round {cleanup_round+1} ===")
+            revoked = 0
+            for a, b in list(self.mapping):
+                if self.mapping.is_locked(a):
+                    continue
+                # Forward
+                a_nbs = list(self.a.neighbours(a))
+                mapped_fwd = [self.mapping.get(n) for n in a_nbs
+                              if self.mapping.get(n) is not None]
+                # Reverse
+                a_rev = list(self.a.reverse_neighbours(a))
+                mapped_rev = [self.mapping.get(n) for n in a_rev
+                              if self.mapping.get(n) is not None]
+                if len(mapped_fwd) + len(mapped_rev) < 3:
+                    continue
+                b_fwd = set(self.b.neighbours(b))
+                b_rev = set(self.b.reverse_neighbours(b))
+                fwd_hits = sum(1 for x in mapped_fwd if x in b_fwd)
+                rev_hits = sum(1 for x in mapped_rev if x in b_rev)
+                # Revoke iff BOTH directions have zero alignment AND
+                # the pair has sample size to make that meaningful.
+                fwd_ok = len(mapped_fwd) < 3 or fwd_hits > 0
+                rev_ok = len(mapped_rev) < 3 or rev_hits > 0
+                if not fwd_ok and not rev_ok:
+                    self.mapping._a2b.pop(a, None)
+                    self.mapping._b2a.pop(b, None)
+                    self.mapping._conf.pop(a, None)
+                    self.mapping._matchers.pop((a, b), None)
+                    self.mapping.mark_negative(a, b)
+                    revoked += 1
+            _log(f"  round {cleanup_round+1}: revoked {revoked} pairs")
+            if revoked == 0:
+                break
 
         # Two-pass: rebuild A with LX refs substituted, re-run
         # substitution-sensitive tier-2 matchers. Single round —
