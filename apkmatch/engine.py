@@ -289,14 +289,20 @@ class Engine:
             _log(f"=== validator pass (final) ===")
             self._validate_all("final")
 
-        # Two-pass: rebuild A with LX refs substituted, re-run tier-2
-        # matchers on the substituted view. Tier-2 matchers (string
-        # set, stable-refs multiset, call-target multiset) ignore
-        # mapping; after substitution, A's refs become B-side names
-        # so any cross-build collision that was previously masked by
-        # rotation now hashes identically.
-        if len(self.mapping) > 0:
-            _log(f"=== two-pass: substituting A through mapping and re-running tier-2 ===")
+        # Two-pass: rebuild A with LX refs substituted, re-run
+        # substitution-sensitive tier-2 matchers. Single round —
+        # multi-round adds marginal coverage but iterates noise.
+        second_pass_ids = {
+            "stable_refs_ms", "stable_refs_set", "strings_plus_refs",
+            "call_targets_ms", "field_targets_ms", "fqn_stable",
+        }
+        tier2_subst = [m for m in self.matchers
+                       if getattr(m, "tier", 2) == 2
+                       and getattr(m, "id", "") in second_pass_ids]
+        for rnd in range(1):
+            if not len(self.mapping):
+                break
+            _log(f"=== two-pass round {rnd+1}: substituting + re-running tier-2 ===")
             t0 = time.time()
             class _MapView:
                 def __init__(self, m): self._m = m
@@ -306,28 +312,19 @@ class Engine:
             from .project import InMemoryProject as _IMP
             sub_a = _IMP(sub_records)
             _log(f"  substituted A in {time.time()-t0:.1f}s")
-            # Save original A and run tier-2 matchers against substituted A.
             orig_a = self.a
             self.a = sub_a
-            # Only run matchers whose fingerprints actually CHANGE after
-            # substitution — string/native-symbol matchers won't behave
-            # differently on substituted records.
-            second_pass_ids = {
-                "stable_refs_ms", "stable_refs_set", "strings_plus_refs",
-                "call_targets_ms", "field_targets_ms",
-                "fqn_stable",
-            }
-            tier2_only = [m for m in self.matchers
-                          if getattr(m, "tier", 2) == 2
-                          and getattr(m, "id", "") in second_pass_ids]
-            _log(f"  running {len(tier2_only)} tier-2 matchers on substituted view")
-            for m in tier2_only:
+            before = len(self.mapping)
+            for m in tier2_subst:
                 self._run_matcher(m)
             self.a = orig_a
-
             if self.validators:
-                _log(f"=== validator pass (post two-pass) ===")
-                self._validate_all("post-twopass")
+                _log(f"=== validator pass (post two-pass round {rnd+1}) ===")
+                self._validate_all(f"post-twopass-r{rnd+1}")
+            gained = len(self.mapping) - before
+            _log(f"  round {rnd+1} gained {gained} pairs")
+            if gained < 50:
+                break
 
         return RunResult(
             epochs=self.mapping.epoch,
