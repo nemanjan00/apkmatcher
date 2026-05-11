@@ -807,6 +807,77 @@ class AnonBodyHashJaccard:
                                 ("anon_body_jac", round(jac, 2)))
 
 
+class FieldTypeSequenceSubstituted:
+    """Tier-3. Per-class ordered list of field types, after substituting
+    every LX type ref through the current mapping. Match against B's
+    raw field-type list. Captures data-carrier classes whose identity
+    is mostly defined by 'this class has these fields in this order'.
+
+    Includes super (substituted) and shape in the fingerprint to
+    avoid over-matching tiny classes that happen to declare similar
+    field type lists.
+    """
+    id = "field_type_seq_sub"; tier = 3
+
+    def __init__(self, min_fields: int = 2):
+        self.min_fields = min_fields
+
+    def _sub_super(self, s, mapping):
+        if not s or s == "Ljava/lang/Object;": return s
+        if s.startswith("LX/"): return mapping.get(s) or s
+        return s
+
+    def _sub_type(self, t, mapping):
+        # field type may be primitive ('I') or array ('[Lfoo/Bar;') or
+        # class ref ('LX/Foo;'). Strip leading array marker(s) for
+        # substitution, re-prepend afterward.
+        depth = 0
+        while t.startswith("["):
+            depth += 1; t = t[1:]
+        if t.startswith("LX/") and t.endswith(";"):
+            sub = mapping.get(t)
+            if sub is None: return None
+            return "[" * depth + sub
+        return "[" * depth + t
+
+    def _fp_a(self, ra, mapping):
+        ft = ra.get("field_types", ())
+        if len(ft) < self.min_fields: return None
+        sub = []
+        for t in ft:
+            s = self._sub_type(t, mapping)
+            if s is None: return None
+            sub.append(s)
+        return _fp("fts", tuple(sub),
+                   self._sub_super(ra.get("super"), mapping),
+                   ra["nm"], tuple(ra["mods"]))
+
+    def _fp_b(self, rb):
+        ft = rb.get("field_types", ())
+        if len(ft) < self.min_fields: return None
+        return _fp("fts", tuple(ft), rb.get("super") or "",
+                   rb["nm"], tuple(rb["mods"]))
+
+    def propose(self, a, b, mapping):
+        Bidx = defaultdict(list)
+        for r in b.classes():
+            if not r["id"].startswith("LX/"): continue
+            if mapping.inverse(r["id"]) is not None: continue
+            h = self._fp_b(r)
+            if h: Bidx[h].append(r["id"])
+        for r in a.classes():
+            if not r["id"].startswith("LX/"): continue
+            if mapping.get(r["id"]) is not None: continue
+            h = self._fp_a(r, mapping)
+            if not h: continue
+            blst = Bidx.get(h)
+            if not blst: continue
+            conf = _specificity_confidence(0.85, 1, len(blst))
+            for bid in blst:
+                yield Candidate(r["id"], bid, conf, self.id,
+                                ("field_type_seq", len(blst)))
+
+
 class AnonBodyHashMultiset:
     """Tier 2. Multiset of LX-stripped per-method body hashes
     (`bha` field). Strips every `LX/...;` reference in the smali body
@@ -1928,6 +1999,7 @@ DEFAULT_MATCHERS = [
     LockStep(min_mapped=2),
     LockStep(min_mapped=1),
     DisambiguatingLockStep(min_mapped=3),
+    FieldTypeSequenceSubstituted(min_fields=2),
     MappedNeighbourFingerprint(min_neighbours=3, min_mapped_ratio=0.7),
     MappedNeighbourFingerprint(min_neighbours=2, min_mapped_ratio=0.5),
     SymmetricNeighbourFingerprint(min_neighbours=4, min_mapped_ratio=0.6),

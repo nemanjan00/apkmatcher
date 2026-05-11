@@ -208,6 +208,11 @@ def parse_class(path: str, bucket: str) -> dict | None:
     # target is an LX class that survives unchanged.
     call_targets: list[tuple[str, str]] = []
     field_targets: list[tuple[str, str]] = []
+    # Per-class declared field types in declaration order. Lets matchers
+    # use the multiset (or sequence) of field types as a fingerprint
+    # that's preserved across builds even when LX type names rotate
+    # (because the LX names get substituted through the mapping).
+    field_types: list[str] = []
     # Per-method records: list of dicts with method's own info plus
     # the call/field targets it specifically performed. Lets matchers
     # reason about method pairing within paired classes
@@ -344,6 +349,7 @@ def parse_class(path: str, bucket: str) -> dict | None:
             colon = tail.rfind(":")
             if colon != -1:
                 ftype = tail[colon+1:].split()[0]
+                field_types.append(ftype)
                 if ftype.startswith("L") and ftype.endswith(";"):
                     trefs.add(ftype)
             continue
@@ -405,7 +411,8 @@ def parse_class(path: str, bucket: str) -> dict | None:
         "call_targets": call_targets,
         "field_targets": field_targets,
         "methods": methods,
-        "line_refs": line_refs,  # list[(line_no, stable_class_ref)]
+        "line_refs": line_refs,
+        "field_types": field_types,  # list[str] in declaration order
     }
 
 

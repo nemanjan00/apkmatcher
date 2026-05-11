@@ -127,7 +127,11 @@ since non-LX classes are free anchors that round-trip by FQN.
 | + MethodWalk (per-method graph walk) | 83.2 % | 81.4 % | 77.8 % | 100.0 % | 76.8 % | 17233 | 0.831 | 279 s |
 | + MappedNeighbourFingerprint | 84.0 % | 82.2 % | 78.6 % | 100.0 % | 77.4 % | 17641 | 0.834 | 338 s |
 | + looser fingerprint pass + EnumValueNamesJaccard + NeighbourVote n=1 + positional MethodWalk | 85.2 % | 83.7 % | 80.0 % | 100.0 % | 77.1 % | 17751 | 0.836 | 338 s |
-| + validator-promoted lock @ conf>=0.85 + SymmetricNeighbourFingerprint | **85.3 %** | **83.7 %** | **80.1 %** | **100.0 %** | 77.3 % | 17739 | **0.837** | 299 s |
+| + validator-promoted lock @ conf>=0.85 + SymmetricNeighbourFingerprint | 85.3 % | 83.7 % | 80.1 % | 100.0 % | 77.3 % | 17739 | 0.837 | 299 s |
+| + Hungarian method pairing | 85.4 % | 83.8 % | 80.1 % | 100.0 % | 77.4 % | 17864 | 0.837 | 344 s |
+| + AnonBodyHashMultiset (LX-stripped per-method body hashes) | 87.5 % | 86.2 % | 82.4 % | 100.0 % | 77.4 % | 20785 | 0.842 | 362 s |
+| + AnonBodyHashJaccard strict (m=5, j=0.85) + (m=3, j=0.95) | 87.6 % | 86.4 % | 82.5 % | 100.0 % | 77.5 % | 21024 | 0.842 | 421 s |
+| + FieldTypeSequenceSubstituted | **88.6 %** | **87.4 %** | **83.6 %** | **100.0 %** | 77.1 % | **20988** | **0.843** | 415 s |
 
 ## Status
 
