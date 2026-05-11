@@ -412,6 +412,57 @@ class WeightedNeighbourVote(NeighbourVote):
                             ("nv_w", top_v, second))
 
 
+class EnumValueNamesJaccard:
+    """Tier-2. Same as EnumValueNames but uses Jaccard >= 0.7 instead
+    of equality. Catches enums that gained or removed a value between
+    builds (e.g., a new state added to a status enum)."""
+    id = "enum_values_jaccard"; tier = 2
+
+    def __init__(self, min_jaccard: float = 0.7, min_overlap: int = 3):
+        self.min_jaccard = min_jaccard
+        self.min_overlap = min_overlap
+
+    @staticmethod
+    def _is_namelike(s: str) -> bool:
+        if not s or len(s) < 2: return False
+        if any(c in s for c in " /\\.%\"\n\t,:?"): return False
+        return True
+
+    def _names(self, rec):
+        if "enum" not in rec.get("mods", ()): return None
+        n = sorted({s for s in rec["strings"] if self._is_namelike(s)})
+        if len(n) < self.min_overlap: return None
+        return n
+
+    def propose(self, a, b):
+        # Inverted index: per-name -> B class IDs (enum-class only).
+        idx = defaultdict(set)
+        b_names: dict[str, set] = {}
+        for r in b.classes():
+            n = self._names(r)
+            if not n: continue
+            ns = set(n)
+            b_names[r["id"]] = ns
+            for s in ns:
+                idx[s].add(r["id"])
+        for r in a.classes():
+            n = self._names(r)
+            if not n: continue
+            ans = set(n)
+            counts: dict[str, int] = defaultdict(int)
+            for s in ans:
+                for bid in idx.get(s, ()):
+                    counts[bid] += 1
+            for bid, hit in counts.items():
+                if hit < self.min_overlap: continue
+                bset = b_names[bid]
+                jac = hit / len(ans | bset)
+                if jac < self.min_jaccard: continue
+                conf = 0.6 + 0.32 * (jac - self.min_jaccard) / (1 - self.min_jaccard)
+                yield Candidate(r["id"], bid, conf, self.id,
+                                ("enum_jac", round(jac, 2)))
+
+
 class EnumValueNames:
     """For `enum` classes, match by the multiset of enum value names.
 
@@ -1562,6 +1613,7 @@ DEFAULT_MATCHERS = [
     CallTargetMultiset(min_targets=4),
     FieldTargetMultiset(min_targets=3),
     EnumValueNames(),
+    EnumValueNamesJaccard(min_jaccard=0.7, min_overlap=2),
     JaccardStrings(min_jaccard=0.7, min_overlap=3),
     LineRefMultiset(min_refs=4),
 
