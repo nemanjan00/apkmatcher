@@ -1078,10 +1078,14 @@ class MethodWalk:
         return "".join(out)
 
     def _pair_methods(self, ma_list, mb_list, mapping):
-        """Greedy method pairing within a confirmed class pair.
-        Pass 1: substituted-signature equality. Pass 2: best
-        remaining matches by (calls, facc) Jaccard. Returns list
-        of (ma, mb) pairs."""
+        """Method pairing inside a confirmed class pair.
+
+        Pass 1: substituted-signature equality (deterministic, cheap).
+        Pass 2: Hungarian (optimal bipartite) assignment over the
+        remaining methods using a (calls, facc, branch-count)
+        similarity cost. Falls back to greedy if scipy missing or
+        problem is huge.
+        """
         out = []
         b_by_sub_sig = defaultdict(list)
         for mb in mb_list:
@@ -1100,26 +1104,56 @@ class MethodWalk:
                 out.append((ma, picked))
             else:
                 leftover_a.append(ma)
-        # Greedy pass on leftovers
         leftover_b = [mb for mb in mb_list if id(mb) not in used_b]
-        for ma in leftover_a:
-            ma_calls = set(map(tuple, ma["calls"]))
-            ma_facc = set(map(tuple, ma["facc"]))
-            best = None; best_s = 0.0
-            for mb in leftover_b:
-                if id(mb) in used_b: continue
-                mb_calls = set(map(tuple, mb["calls"]))
-                mb_facc = set(map(tuple, mb["facc"]))
-                u = (ma_calls | mb_calls); ix = (ma_calls & mb_calls)
-                jc = len(ix) / max(1, len(u))
-                u2 = (ma_facc | mb_facc); ix2 = (ma_facc & mb_facc)
-                jf = len(ix2) / max(1, len(u2))
-                s = 0.6 * jc + 0.4 * jf
-                if s > best_s:
-                    best_s = s; best = mb
-            if best is not None and best_s >= 0.5:
-                out.append((ma, best))
-                used_b.add(id(best))
+        if not leftover_a or not leftover_b:
+            return out
+
+        def sim(ma, mb):
+            ma_c = set(map(tuple, ma["calls"]))
+            mb_c = set(map(tuple, mb["calls"]))
+            ma_f = set(map(tuple, ma["facc"]))
+            mb_f = set(map(tuple, mb["facc"]))
+            jc = (len(ma_c & mb_c) / max(1, len(ma_c | mb_c))
+                  if (ma_c or mb_c) else 0.0)
+            jf = (len(ma_f & mb_f) / max(1, len(ma_f | mb_f))
+                  if (ma_f or mb_f) else 0.0)
+            br = 1.0 - abs(ma["br"] - mb["br"]) / max(1, max(ma["br"], mb["br"]))
+            return 0.5 * jc + 0.3 * jf + 0.2 * br
+
+        # Hungarian via scipy when available and matrix manageable.
+        if len(leftover_a) * len(leftover_b) > 10000:
+            # fallback greedy
+            for ma in leftover_a:
+                best = None; best_s = 0.0
+                for mb in leftover_b:
+                    if id(mb) in used_b: continue
+                    s = sim(ma, mb)
+                    if s > best_s:
+                        best_s = s; best = mb
+                if best is not None and best_s >= 0.5:
+                    out.append((ma, best)); used_b.add(id(best))
+            return out
+        try:
+            from scipy.optimize import linear_sum_assignment
+            import numpy as np
+            costs = np.zeros((len(leftover_a), len(leftover_b)))
+            for i, ma in enumerate(leftover_a):
+                for j, mb in enumerate(leftover_b):
+                    costs[i, j] = 1.0 - sim(ma, mb)
+            r, c = linear_sum_assignment(costs)
+            for i, j in zip(r, c):
+                if costs[i, j] <= 0.5:  # similarity >= 0.5
+                    out.append((leftover_a[i], leftover_b[j]))
+        except ImportError:
+            for ma in leftover_a:
+                best = None; best_s = 0.0
+                for mb in leftover_b:
+                    if id(mb) in used_b: continue
+                    s = sim(ma, mb)
+                    if s > best_s:
+                        best_s = s; best = mb
+                if best is not None and best_s >= 0.5:
+                    out.append((ma, best)); used_b.add(id(best))
         return out
 
     def propose(self, a, b, mapping):
