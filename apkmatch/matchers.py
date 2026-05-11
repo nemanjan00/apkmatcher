@@ -710,6 +710,71 @@ class PerMethodCallSet:
                             ("per_method_callset", top_v, second))
 
 
+def _bucket_mapping(a, b, mapping) -> dict[str, str]:
+    """Derive bucket-bucket frequencies from the current mapping.
+    Returns each A-bucket to its most-frequent B-bucket."""
+    from collections import Counter
+    pairs: dict[str, Counter] = defaultdict(Counter)
+    for ax, bx in mapping:
+        ra = a.get(ax); rb = b.get(bx)
+        if not ra or not rb: continue
+        pairs[ra.get("bucket", "")][rb.get("bucket", "")] += 1
+    return {bucket: top.most_common(1)[0][0]
+            for bucket, top in pairs.items() if top}
+
+
+class BucketAwareDisambiguator:
+    """Tier-3 final pass. For each unmatched A class, look at B
+    classes in the bucket A's bucket most commonly maps to. Score
+    by content; propose best with margin.
+
+    Apktool preserves dex-bucket assignment which is relatively
+    stable across builds — most classes don't shuffle buckets.
+    This pass uses that locality as a candidate-set narrower
+    when nothing else has fired.
+    """
+    id = "bucket_disambig"; tier = 3
+
+    def __init__(self, min_score: float = 0.75, min_margin: float = 0.18,
+                 max_candidates: int = 100):
+        self.min_score = min_score
+        self.min_margin = min_margin
+        self.max_candidates = max_candidates
+
+    def propose(self, a, b, mapping):
+        bmap = _bucket_mapping(a, b, mapping)
+        # Build per-bucket B class index of unmatched classes
+        b_in_bucket: dict[str, list[dict]] = defaultdict(list)
+        for r in b.classes():
+            if not r["id"].startswith("LX/"): continue
+            if mapping.inverse(r["id"]) is not None: continue
+            b_in_bucket[r.get("bucket", "")].append(r)
+        for r in a.classes():
+            if not r["id"].startswith("LX/"): continue
+            if mapping.get(r["id"]) is not None: continue
+            target_bucket = bmap.get(r.get("bucket", ""))
+            if not target_bucket: continue
+            cands = b_in_bucket.get(target_bucket, ())
+            if not cands or len(cands) > self.max_candidates * 100:
+                # too many — narrow by shape
+                cands = [c for c in cands
+                         if c["nm"] == r["nm"] and c["nf"] == r["nf"]]
+            if not cands or len(cands) > self.max_candidates:
+                continue
+            scored = []
+            for rb in cands:
+                s = _content_score(r, rb, mapping)
+                scored.append((s, rb["id"]))
+            if len(scored) < 2: continue
+            scored.sort(reverse=True)
+            top_s, top_b = scored[0]
+            second_s = scored[1][0]
+            if top_s < self.min_score: continue
+            if top_s - second_s < self.min_margin: continue
+            yield Candidate(r["id"], top_b, 0.6 + (top_s - second_s),
+                            self.id, ("bucket_disambig", round(top_s, 2)))
+
+
 class BestEffortContentMatch:
     """Tier-3 final pass. For each unmatched A class, find its best
     B candidate via a content score over a CANDIDATE SET seeded by
@@ -2360,6 +2425,9 @@ DEFAULT_MATCHERS = [
     BhaMethodVote(min_votes=3, min_ratio=0.5),
     MethodSigSubstitutedVote(min_votes=4, min_ratio=0.7),
     BestEffortContentMatch(min_score=0.75, min_margin=0.2),
+    # BucketAwareDisambiguator tried — bucket assignment isn't stable
+    # enough across IG builds to be a reliable disambiguator. Net zero
+    # / slight regression.
     # SiblingByMappedInterfaces() — tried but regressed quality
     # (matches lambdas that look alike; LockStep already covers
     # the cases it gets right).
