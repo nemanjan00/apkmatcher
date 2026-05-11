@@ -304,28 +304,17 @@ class Engine:
                 a_nbs = list(self.a.neighbours(a))
                 mapped_nbs = [self.mapping.get(n) for n in a_nbs
                               if self.mapping.get(n) is not None]
-                if not mapped_nbs:
+                if len(mapped_nbs) < 2:
                     continue
                 b_nbs = set(self.b.neighbours(b))
                 hits = sum(1 for x in mapped_nbs if x in b_nbs)
-                if hits > 0:
-                    continue
-                # Hard rule: revoke when >= 2 mapped neighbours all miss.
-                # Soft rule: revoke single-mapped-neighbour pairs only
-                # if they're poorly supported (one matcher, low conf).
-                if len(mapped_nbs) >= 2:
-                    pass  # always revoke
-                else:
-                    cur_conf = self.mapping.confidence(a) or 0.0
-                    n_matchers = len(set(self.mapping.matchers_for(a, b)))
-                    if n_matchers > 1 or cur_conf >= 0.75:
-                        continue
-                self.mapping._a2b.pop(a, None)
-                self.mapping._b2a.pop(b, None)
-                self.mapping._conf.pop(a, None)
-                self.mapping._matchers.pop((a, b), None)
-                self.mapping.mark_negative(a, b)
-                revoked += 1
+                if hits == 0:
+                    self.mapping._a2b.pop(a, None)
+                    self.mapping._b2a.pop(b, None)
+                    self.mapping._conf.pop(a, None)
+                    self.mapping._matchers.pop((a, b), None)
+                    self.mapping.mark_negative(a, b)
+                    revoked += 1
             _log(f"  round {cleanup_round+1}: revoked {revoked} pairs")
             if revoked == 0:
                 break
