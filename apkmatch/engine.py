@@ -293,7 +293,7 @@ class Engine:
 
         # Neighbour-consistency cleanup, iterated. Revoking pairs can
         # remove evidence that supported other pairs, so re-check.
-        for cleanup_round in range(5):
+        for cleanup_round in range(1):
             _log(f"=== neighbour-consistency cleanup round {cleanup_round+1} ===")
             revoked = 0
             for a, b in list(self.mapping):
