@@ -291,6 +291,34 @@ class Engine:
             _log(f"=== validator pass (final) ===")
             self._validate_all("final")
 
+        # Neighbour-consistency cleanup. For each non-locked confirmed
+        # pair, compute the fraction of A's matched outgoing neighbours
+        # whose B-side partner is also a neighbour of B. If zero AND
+        # the pair has more than min_matched_neighbours mapped
+        # neighbours to check, revoke. This filters out pairs that
+        # were committed by weak signals but are inconsistent with
+        # the surrounding graph.
+        _log(f"=== neighbour-consistency cleanup ===")
+        revoked = 0
+        for a, b in list(self.mapping):
+            if self.mapping.is_locked(a):
+                continue
+            a_nbs = list(self.a.neighbours(a))
+            mapped_nbs = [self.mapping.get(n) for n in a_nbs
+                          if self.mapping.get(n) is not None]
+            if len(mapped_nbs) < 3:
+                continue
+            b_nbs = set(self.b.neighbours(b))
+            hits = sum(1 for x in mapped_nbs if x in b_nbs)
+            if hits == 0:
+                self.mapping._a2b.pop(a, None)
+                self.mapping._b2a.pop(b, None)
+                self.mapping._conf.pop(a, None)
+                self.mapping._matchers.pop((a, b), None)
+                self.mapping.mark_negative(a, b)
+                revoked += 1
+        _log(f"  neighbour-consistency cleanup: revoked {revoked} pairs")
+
         # Two-pass: rebuild A with LX refs substituted, re-run
         # substitution-sensitive tier-2 matchers. Single round —
         # multi-round adds marginal coverage but iterates noise.
