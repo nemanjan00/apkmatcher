@@ -23,6 +23,7 @@ import time
 
 from .engine import Engine
 from .loader import index_tree, load_jsonl
+from .member_pairing import build_member_mappings
 from .project import InMemoryProject
 
 
@@ -81,7 +82,17 @@ def cmd_match(args):
     print(f"[cli] matched {run.final_size} pairs in {t_run:.1f}s "
           f"(epochs={run.epochs}, converged={run.converged})", file=sys.stderr)
 
-    _emit(_build_result(eng, run, t_load, t_run), args.out)
+    print(f"[cli] building method/field mappings...", file=sys.stderr)
+    t2 = time.time()
+    members = build_member_mappings(eng.mapping, A, B)
+    print(f"[cli]   methods: {len(members['methods'])}, "
+          f"fields: {len(members['fields'])}  ({time.time()-t2:.1f}s)",
+          file=sys.stderr)
+
+    result = _build_result(eng, run, t_load, t_run)
+    result["method_mapping"] = members["methods"]
+    result["field_mapping"] = members["fields"]
+    _emit(result, args.out)
 
 
 def cmd_run(args):

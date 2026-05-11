@@ -96,6 +96,7 @@ class Engine:
         tier3_min_churn: int = 50,
         tier3_quiet_epochs: int = 2,
         validator_revoke_threshold: float = 0.4,
+        two_pass: bool = True,
     ):
         self.a = a; self.b = b
         self.matchers = matchers or DEFAULT_MATCHERS
@@ -108,6 +109,7 @@ class Engine:
         self.tier3_min_churn = tier3_min_churn
         self.tier3_quiet_epochs = tier3_quiet_epochs
         self.validator_revoke_threshold = validator_revoke_threshold
+        self.two_pass = two_pass
         self.stats: dict[str, dict] = defaultdict(
             lambda: {"proposed": 0, "added": 0, "displaced": 0,
                      "updated": 0, "rejected": 0, "locked-blocked": 0})
@@ -299,7 +301,7 @@ class Engine:
         tier2_subst = [m for m in self.matchers
                        if getattr(m, "tier", 2) == 2
                        and getattr(m, "id", "") in second_pass_ids]
-        for rnd in range(1):
+        for rnd in range(0 if not self.two_pass else 1):
             if not len(self.mapping):
                 break
             _log(f"=== two-pass round {rnd+1}: substituting + re-running tier-2 ===")
