@@ -1793,11 +1793,12 @@ class AnnsPositionLXVote:
     unmapped LX annotations. Annotation declaration order on
     a class is usually preserved across builds.
     """
-    id = "anns_position_lx_vote"; tier = 3
+    tier = 3
 
     def __init__(self, min_votes: int = 2, min_margin: int = 1):
         self.min_votes = min_votes
         self.min_margin = min_margin
+        self.id = f"anns_position_lx_vote_n{min_votes}"
 
     def propose(self, a, b, mapping):
         votes: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
@@ -1830,11 +1831,12 @@ class SuperLXVote:
     Catches super classes that no other matcher has pinned but
     that have many subclass instances in the confirmed mapping.
     """
-    id = "super_lx_vote"; tier = 3
+    tier = 3
 
     def __init__(self, min_votes: int = 2, min_margin: int = 1):
         self.min_votes = min_votes
         self.min_margin = min_margin
+        self.id = f"super_lx_vote_n{min_votes}"
 
     def propose(self, a, b, mapping):
         votes: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
@@ -1864,11 +1866,12 @@ class ImplsPositionLXVote:
     unmapped LX impls. Classes that implement multiple interfaces
     typically declare them in the same order across builds.
     """
-    id = "impls_position_lx_vote"; tier = 3
+    tier = 3
 
     def __init__(self, min_votes: int = 2, min_margin: int = 1):
         self.min_votes = min_votes
         self.min_margin = min_margin
+        self.id = f"impls_position_lx_vote_n{min_votes}"
 
     def propose(self, a, b, mapping):
         votes: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
@@ -1905,11 +1908,12 @@ class FieldPositionLXVote:
     voting precise and powerful for classes whose only signal is
     their field-type LX refs.
     """
-    id = "field_position_lx_vote"; tier = 3
+    tier = 3
 
     def __init__(self, min_votes: int = 2, min_margin: int = 1):
         self.min_votes = min_votes
         self.min_margin = min_margin
+        self.id = f"field_position_lx_vote_n{min_votes}"
 
     @staticmethod
     def _extract_lx(t: str) -> str | None:
@@ -2790,9 +2794,13 @@ DEFAULT_MATCHERS = [
     # most classes.
     MethodWalk(min_inferences=2, min_margin=1),
     FieldPositionLXVote(min_votes=2, min_margin=1),
+    FieldPositionLXVote(min_votes=1, min_margin=1),  # looser
     ImplsPositionLXVote(min_votes=2, min_margin=1),
+    ImplsPositionLXVote(min_votes=1, min_margin=1),
     SuperLXVote(min_votes=2, min_margin=1),
+    SuperLXVote(min_votes=1, min_margin=1),
     AnnsPositionLXVote(min_votes=2, min_margin=1),
+    AnnsPositionLXVote(min_votes=1, min_margin=1),
     ReverseLockStep(min_mapped=4),
     ReverseLockStep(min_mapped=3),
     ReverseLockStep(min_mapped=2),
