@@ -1413,7 +1413,7 @@ class KotlinDebugMetadataFingerprint:
     them at runtime for stack traces. They are essentially
     ground-truth identity for coroutine continuation classes.
     """
-    id = "kotlin_debug_metadata"; tier = 1
+    id = "kotlin_debug_metadata"; tier = 2
 
     def _fp(self, rec: dict) -> str | None:
         km = rec.get("kotlin_meta", ())
@@ -2954,10 +2954,10 @@ DEFAULT_MATCHERS = [
     IdenticalStrings(),
     LongUniqueString(),
     DeobfuscatedFQNFingerprint(),
-    KotlinDebugMetadataFingerprint(),
 
     # ---- Tier 2: content fingerprints ---------------------------------
     UniqueString(),
+    KotlinDebugMetadataFingerprint(),
     StringPair(),
     StringSetHash(),
     StringsPlusStableRefs(),
