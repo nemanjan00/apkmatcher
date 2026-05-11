@@ -2957,7 +2957,9 @@ DEFAULT_MATCHERS = [
 
     # ---- Tier 2: content fingerprints ---------------------------------
     UniqueString(),
-    KotlinDebugMetadataFingerprint(),
+    # KotlinDebugMetadataFingerprint tested at tier 1 and tier 2 —
+    # both regressed overall by displacing better matches. Kept in
+    # the matchers module as a documented attempt.
     StringPair(),
     StringSetHash(),
     StringsPlusStableRefs(),
