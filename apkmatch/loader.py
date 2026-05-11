@@ -223,6 +223,10 @@ def parse_class(path: str, bucket: str) -> dict | None:
     cur_facc: list[tuple[str, str]] = []
     cur_facc_typed: list[tuple[str, str]] = []  # (class, field type)
     cur_strings: list[str] = []
+    # Per-method ordered list of LX refs encountered in the body.
+    # Lets a position-aligned LX vote matcher walk paired-method
+    # bodies and infer LX -> LX from same-position occurrences.
+    cur_body_lx: list[str] = []
     cur_n_branches = 0
     cur_line = 0
     # (line, target_class) tuples — high-precision reference signal:
@@ -266,11 +270,13 @@ def parse_class(path: str, bucket: str) -> dict | None:
                     "calls": cur_calls, "calls_full": cur_calls_full,
                     "facc": cur_facc, "facc_typed": cur_facc_typed,
                     "strs": cur_strings, "br": cur_n_branches,
+                    "body_lx": cur_body_lx,
                 })
                 in_method = False
                 cur_body = []; cur_calls = []; cur_calls_full = []
                 cur_facc = []; cur_facc_typed = []
                 cur_strings = []; cur_n_branches = 0
+                cur_body_lx = []
                 continue
             if line.startswith(P_CSTR):
                 q1 = line.find('"'); q2 = line.rfind('"')
@@ -302,6 +308,8 @@ def parse_class(path: str, bucket: str) -> dict | None:
                             call_targets.append((cls, mname))
                             cur_calls.append((cls, mname))
                             cur_calls_full.append((cls, full_sig))
+                            if cls.startswith("LX/"):
+                                cur_body_lx.append(cls)
                             if not cls.startswith("LX/") and cur_line:
                                 line_refs.append((cur_line, cls))
                 cur_body.append(_normalize_op(line))
@@ -325,6 +333,10 @@ def parse_class(path: str, bucket: str) -> dict | None:
                                 field_targets.append((cls, fname))
                                 cur_facc.append((cls, fname))
                                 cur_facc_typed.append((cls, ftype))
+                                if cls.startswith("LX/"):
+                                    cur_body_lx.append(cls)
+                                if ftype.startswith("LX/"):
+                                    cur_body_lx.append(ftype)
                 cur_body.append(_normalize_op(line))
                 continue
             if line.startswith("if-") or line.startswith("packed-switch") \
@@ -336,6 +348,8 @@ def parse_class(path: str, bucket: str) -> dict | None:
                 last = line.rsplit(None, 1)[-1]
                 if last.startswith("L") and last.endswith(";"):
                     trefs.add(last)
+                    if last.startswith("LX/"):
+                        cur_body_lx.append(last)
                 cur_body.append(_normalize_op(line))
                 continue
             # Resolve resource-id constants if the body has them.
@@ -375,6 +389,7 @@ def parse_class(path: str, bucket: str) -> dict | None:
             cur_calls = []; cur_calls_full = []; cur_facc = []
             cur_facc_typed = []
             cur_strings = []
+            cur_body_lx = []
             cur_n_branches = 0
             tail = line[len(P_METHOD):]
             cur_is_native = " native " in (" " + tail + " ")

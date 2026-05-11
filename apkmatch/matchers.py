@@ -1787,6 +1787,53 @@ class MappedNeighbourFingerprint:
                                 ("mapped_nb_fp", len(blst)))
 
 
+class BodyLXSequenceVote:
+    """Tier-3. For each confirmed class pair, pair methods first
+    (by substituted signature); for each paired method, walk the
+    body_lx LX-reference sequence in order. When both sequences
+    are the same length, vote (a_lx, b_lx) at every same-position
+    pair of unmapped LX refs.
+
+    Captures bytecode-position-level LX correspondence that the
+    other position matchers (field/impls/super/anns) don't see.
+    """
+    tier = 3
+
+    def __init__(self, min_votes: int = 2, min_margin: int = 1):
+        self.min_votes = min_votes
+        self.min_margin = min_margin
+        self.id = f"body_lx_seq_vote_n{min_votes}"
+
+    def propose(self, a, b, mapping):
+        votes: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        for a_cid, b_cid in mapping:
+            ra = a.get(a_cid); rb = b.get(b_cid)
+            if not ra or not rb: continue
+            ma_list = ra.get("methods", ()); mb_list = rb.get("methods", ())
+            if not ma_list or not mb_list: continue
+            # Pair methods by raw signature equality (cheap, exact).
+            b_by_sig: dict[str, dict] = {mb["sig"]: mb for mb in mb_list}
+            for ma in ma_list:
+                mb = b_by_sig.get(ma["sig"])
+                if mb is None: continue
+                aseq = ma.get("body_lx", ())
+                bseq = mb.get("body_lx", ())
+                if len(aseq) != len(bseq) or not aseq: continue
+                for ar, br in zip(aseq, bseq):
+                    if mapping.get(ar) is not None: continue
+                    if mapping.inverse(br) is not None: continue
+                    votes[ar][br] += 1
+        for a_cid, vmap in votes.items():
+            if not vmap: continue
+            top_b, top_v = max(vmap.items(), key=lambda kv: kv[1])
+            if top_v < self.min_votes: continue
+            second = max((v for k, v in vmap.items() if k != top_b), default=0)
+            if top_v - second < self.min_margin: continue
+            conf = min(0.72 + 0.02 * (top_v - second), 0.92)
+            yield Candidate(a_cid, top_b, conf, self.id,
+                            ("body_lx_seq", top_v, second))
+
+
 class AnnsPositionLXVote:
     """Tier-3. For each confirmed class pair, walk anns list
     position-by-position. Vote LX_a -> LX_b for same-position
@@ -2801,6 +2848,8 @@ DEFAULT_MATCHERS = [
     SuperLXVote(min_votes=1, min_margin=1),
     AnnsPositionLXVote(min_votes=2, min_margin=1),
     AnnsPositionLXVote(min_votes=1, min_margin=1),
+    BodyLXSequenceVote(min_votes=2, min_margin=1),
+    BodyLXSequenceVote(min_votes=1, min_margin=1),
     ReverseLockStep(min_mapped=4),
     ReverseLockStep(min_mapped=3),
     ReverseLockStep(min_mapped=2),
