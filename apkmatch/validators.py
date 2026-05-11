@@ -187,10 +187,77 @@ class NeighbourConsistencyValidator:
         return Score(v, provisional=prov, deps=reader.deps)
 
 
+class MethodPairCountValidator:
+    """For each confirmed class pair, count how many methods pair
+    exactly by substituted signature. If many → score high
+    (additional confirmation). If zero with non-trivial method sets
+    → score low.
+
+    Provisional when fewer than `min_sigs_to_judge` LX-containing
+    method signatures could be resolved through the mapping.
+    """
+    id = "method_pair_count"
+
+    def __init__(self, min_methods: int = 2, min_pairs_to_pass: int = 2):
+        self.min_methods = min_methods
+        self.min_pairs_to_pass = min_pairs_to_pass
+
+    @staticmethod
+    def _sub_sig(sig: str, reader) -> tuple[str, int]:
+        """Returns (substituted_sig, unresolved_count)."""
+        out = []; i = 0; unresolved = 0
+        while i < len(sig):
+            c = sig[i]
+            if c == "L":
+                e = sig.find(";", i)
+                if e == -1: out.append(sig[i:]); break
+                ref = sig[i:e+1]
+                if ref.startswith("LX/"):
+                    m = reader.get(ref)
+                    if m is None:
+                        unresolved += 1
+                        out.append(ref)
+                    else:
+                        out.append(m)
+                else:
+                    out.append(ref)
+                i = e + 1; continue
+            out.append(c); i += 1
+        return "".join(out), unresolved
+
+    def score(self, c: Candidate, a: InMemoryProject, b: InMemoryProject,
+              reader: MappingReader) -> Score:
+        ra = a.get(c.a); rb = b.get(c.b)
+        if not ra or not rb:
+            return Score(SCORE_NEUTRAL, deps=reader.deps)
+        ma_list = ra.get("methods", ())
+        mb_list = rb.get("methods", ())
+        if len(ma_list) < self.min_methods or len(mb_list) < self.min_methods:
+            return Score(SCORE_NEUTRAL, deps=reader.deps)
+        b_sigs = {mb["sig"] for mb in mb_list}
+        pairs = 0
+        total_unresolved = 0
+        for ma in ma_list:
+            sub_sig, unresolved = self._sub_sig(ma["sig"], reader)
+            total_unresolved += unresolved
+            if sub_sig in b_sigs:
+                pairs += 1
+        provisional = total_unresolved > 0 and pairs < self.min_pairs_to_pass
+        rate = pairs / len(ma_list)
+        if rate >= 0.8: v = SCORE_DECISIVE
+        elif rate >= 0.5: v = 8
+        elif rate >= 0.25: v = 6
+        elif pairs >= self.min_pairs_to_pass: v = SCORE_NEUTRAL
+        elif pairs == 0: v = 2
+        else: v = 4
+        return Score(v, provisional=provisional, deps=reader.deps)
+
+
 DEFAULT_VALIDATORS = [
     ShapeValidator(),
     SignatureRefValidator(),
     NeighbourConsistencyValidator(),
+    MethodPairCountValidator(),
 ]
 
 
