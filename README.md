@@ -144,6 +144,32 @@ since non-LX classes are free anchors that round-trip by FQN.
 | + second tier-3 sweep after first cleanup | 92.4 % | 91.7 % | 88.5 % | 100.0 % | 77.8 % | 21695 | 0.852 | 742 s |
 | + cleanup min_mapped 3 → 2 (both passes) | 92.1 % | 91.4 % | 88.2 % | 100.0 % | 78.7 % | 21694 | 0.854 | 821 s |
 | + BodyLXSequenceVote method-pair fallback via bha | 92.2 % | 91.6 % | 88.4 % | 100.0 % | 78.6 % | 21703 | 0.854 | 779 s |
+| + R8 lambda-merge asymmetry veto                  | 91.9 % | 91.2 % | 87.9 % | 100.0 % | 77.6 % | 21989 | 0.851 | 978 s |
+| + string-bucket shape tie-breaker                 | 91.9 % | 91.1 % | 87.8 % | 100.0 % | 78.3 % | 22008 | 0.852 | 926 s |
+
+## Audit findings (manual smali inspection of 200 random pairs)
+
+Beyond the harness numbers, a manual side-by-side smali inspection of
+200 random pairs surfaced two quality issues that don't move the
+harness score much but matter for correctness:
+
+- **R8 lambda-merge containers** (≈1.3 % of all classes) are bags of
+  unrelated lambdas that R8 collapses into a single class with
+  `<init>(I)V` + a switch in `invoke()`. The bag has no class-level
+  identity across builds — the same logical lambda can land in
+  different bags. Class-level matchers that pair one such container
+  with a regular class are almost always wrong. We veto those
+  cross-pairings (≈700 in IG 415/416). Both-side merge pairs are
+  left alone.
+- **String-fingerprint buckets with N>1 on each side** used to commit
+  in arbitrary order, swapping data classes with their sibling static
+  helpers when both shared the same string set (e.g. SMS config keys
+  appeared in both the data class `LX/5Q2` and the helper `LX/EOi`,
+  and the engine cross-paired them). Shape-aware greedy assignment
+  inside each bucket fixes this.
+
+See `samples/verify_todo.md` for the full audit (157 confirmed, 16
+rejected, 27 unverifiable; numbers are pre-fix — re-run pending).
 
 ## Plateau analysis
 
