@@ -253,11 +253,38 @@ class MethodPairCountValidator:
         return Score(v, provisional=provisional, deps=reader.deps)
 
 
+class LambdaMergeAsymmetryValidator:
+    """Hard-veto pairs where exactly one side is an R8 lambda-merge
+    container (`Function0/1/2/.../22` impl + `<init>(I...)V` ctor +
+    high-branch `invoke()`).
+
+    Rationale: such a container is a bag of N independent lambdas
+    collapsed by the R8 lambda-merging optimisation. The bag's class
+    identity is build-specific — the same logical lambda function can
+    land in completely different containers across builds. Pairing a
+    merged container with a normal class is almost always wrong
+    (we've observed it produce 718 such cross-pairings in the IG
+    415/416 mapping). Pairing two merged containers is *also*
+    unreliable but at least both sides are bags; we leave that to
+    other validators.
+    """
+    id = "lambda_merge_asymmetry"
+
+    def score(self, c: Candidate, a: InMemoryProject, b: InMemoryProject,
+              reader: MappingReader) -> Score:
+        a_lm = a.is_lambda_merge(c.a)
+        b_lm = b.is_lambda_merge(c.b)
+        if a_lm ^ b_lm:
+            return Score(SCORE_VETO)
+        return Score(SCORE_NEUTRAL)
+
+
 DEFAULT_VALIDATORS = [
     ShapeValidator(),
     SignatureRefValidator(),
     NeighbourConsistencyValidator(),
     MethodPairCountValidator(),
+    LambdaMergeAsymmetryValidator(),
 ]
 
 

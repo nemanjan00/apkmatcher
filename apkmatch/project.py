@@ -7,8 +7,17 @@ that is dict/set lookups.
 """
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from typing import Iterator, Optional
+
+# R8 lambda-merging optimisation collapses many independent
+# Function0/Function1/Function2/... lambdas into a single class whose
+# `invoke()` dispatches on an integer field. Two such "merged" classes
+# from different builds rarely correspond to the same logical lambda —
+# the merger groups them on internal heuristics that change build to
+# build. Match these as classes at your peril.
+_KOTLIN_FN_IMPL = re.compile(r"^Lkotlin/jvm/functions/Function\d+;$")
 
 
 def _stable(cid: str) -> bool:
@@ -138,3 +147,30 @@ class InMemoryProject:
 
     def is_obfuscated(self, cid: str) -> bool:
         return not _stable(cid)
+
+    def is_lambda_merge(self, cid: str) -> bool:
+        """True iff this class is an R8 lambda-merge container.
+
+        Signature: implements `kotlin.jvm.functions.FunctionN`, has an
+        `<init>(I...)V` ctor (the integer is the lambda discriminator)
+        and an `invoke()` method whose body has `>= 5` branches (the
+        dispatch switch). The 5-branch floor is conservative — a real
+        per-callsite lambda almost never has more than a couple of
+        branches.
+        """
+        r = self._classes.get(cid)
+        if not r:
+            return False
+        if not any(_KOTLIN_FN_IMPL.match(i) for i in r.get("impls", ())):
+            return False
+        has_int_ctor = False
+        invoke_branches = 0
+        for m in r.get("methods", ()):
+            sig = m.get("sig", "")
+            if sig.startswith("<init>"):
+                params = sig[sig.find("(") + 1: sig.find(")")]
+                if "I" in params:
+                    has_int_ctor = True
+            if m.get("name") == "invoke":
+                invoke_branches = max(invoke_branches, m.get("br", 0))
+        return has_int_ctor and invoke_branches >= 5
