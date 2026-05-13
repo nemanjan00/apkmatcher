@@ -42,6 +42,76 @@ def _stable_refs(project: InMemoryProject, cid: str) -> list[str]:
     return project.stable_refs(cid)
 
 
+# --------------------------------------------------------------------------- #
+# Bucket tie-breaking
+# --------------------------------------------------------------------------- #
+#
+# Several tier-1/2 matchers fingerprint a class by its string set. When N
+# classes on each side share the same fingerprint, the matcher used to
+# emit all m*n candidate pairs at the same confidence. The engine then
+# committed them in arbitrary order, which produced wrong cross-pairings
+# whenever the bucket had >1 class with the same string set (e.g. an
+# SMS-flow data class and its sibling static helper that puts the same
+# config keys into a Bundle).
+#
+# `_resolve_ambiguous` does shape-based assignment within a bucket so
+# only the best 1-to-1 pairing is emitted at the matcher's normal
+# confidence. The discarded pairs are dropped (NOT emitted at lower
+# confidence) because they're known wrong-given-the-bucket; the engine
+# can still pair them via other matchers if real evidence exists.
+
+_KIND_MODS = ("interface", "enum", "annotation")
+
+
+def _shape_dist(ra: dict, rb: dict) -> int:
+    """0 = identical shape, large = incompatible. Returns 999 when class
+    KIND (interface/enum/annotation) differs — those are never the same
+    class."""
+    ma = set(ra["mods"]); mb = set(rb["mods"])
+    if any((k in ma) != (k in mb) for k in _KIND_MODS):
+        return 999
+    d = (abs(ra["nf"] - rb["nf"])
+         + abs(ra["nm"] - rb["nm"])
+         + abs(ra["ns"] - rb["ns"])
+         + abs(ra["nn"] - rb["nn"]))
+    # Stable-namespace super match is a strong identity signal; reward
+    # it heavily so the bucket prefers shape-AND-super-match pairs.
+    sa, sb = ra.get("super") or "", rb.get("super") or ""
+    if sa == sb and sa and not sa.startswith("LX/"):
+        d -= 8
+    return d
+
+
+def _resolve_ambiguous(alst, blst, a, b):
+    """Yield (aid, bid) pairs from a fingerprint bucket. For 1×1
+    buckets, emits the single pair. For m×n with m or n > 1, runs a
+    greedy shape-based assignment so each A-class is paired with the
+    structurally-closest B-class (and vice versa). Pairs with
+    incompatible KIND modifiers are never emitted."""
+    if len(alst) == 1 and len(blst) == 1:
+        ra, rb = a.get(alst[0]), b.get(blst[0])
+        if ra and rb and _shape_dist(ra, rb) < 999:
+            yield alst[0], blst[0]
+        return
+    pairs: list[tuple[int, str, str]] = []
+    for aid in alst:
+        ra = a.get(aid)
+        if not ra: continue
+        for bid in blst:
+            rb = b.get(bid)
+            if not rb: continue
+            d = _shape_dist(ra, rb)
+            if d >= 999: continue
+            pairs.append((d, aid, bid))
+    pairs.sort()
+    used_a: set[str] = set()
+    used_b: set[str] = set()
+    for d, aid, bid in pairs:
+        if aid in used_a or bid in used_b: continue
+        used_a.add(aid); used_b.add(bid)
+        yield aid, bid
+
+
 class CorroboratingShapeFingerprint:
     """Tier-2 corroborator. Hashes by (stable-super, sorted stable
     impls, nm, nf, ns, nn, mods). Designed to FIRE ON pairs that
@@ -221,15 +291,18 @@ class IdenticalStrings:
             if sum(len(s) for s in ss) < self.min_total_len:
                 return None
             return _fp("idstr", ss)
-        Bidx = defaultdict(list)
+        Aidx = defaultdict(list); Bidx = defaultdict(list)
         for r in b.classes():
             h = H(r)
             if h: Bidx[h].append(r["id"])
         for r in a.classes():
             h = H(r)
-            if not h: continue
-            for bid in Bidx.get(h, ()):
-                yield Candidate(r["id"], bid, 0.97, self.id,
+            if h: Aidx[h].append(r["id"])
+        for h, alst in Aidx.items():
+            blst = Bidx.get(h)
+            if not blst: continue
+            for aid, bid in _resolve_ambiguous(alst, blst, a, b):
+                yield Candidate(aid, bid, 0.97, self.id,
                                 ("identical_strings",))
 
 
@@ -243,15 +316,18 @@ class StringSetHash:
         def H(rec):
             ss = sorted({s for s in rec["strings"] if len(s) >= 4})
             return _fp("ss", ss) if len(ss) >= 2 else None
-        Bidx = defaultdict(list)
+        Aidx = defaultdict(list); Bidx = defaultdict(list)
         for r in b.classes():
             h = H(r)
             if h: Bidx[h].append(r["id"])
         for r in a.classes():
             h = H(r)
-            if not h: continue
-            for bid in Bidx.get(h, ()):
-                yield Candidate(r["id"], bid, 0.65, self.id, ("string_set",))
+            if h: Aidx[h].append(r["id"])
+        for h, alst in Aidx.items():
+            blst = Bidx.get(h)
+            if not blst: continue
+            for aid, bid in _resolve_ambiguous(alst, blst, a, b):
+                yield Candidate(aid, bid, 0.65, self.id, ("string_set",))
 
 
 class LongUniqueString:
@@ -288,15 +364,18 @@ class StringPair:
         def H(rec):
             ss = sorted({s for s in rec["strings"] if len(s) >= 8})
             return _fp("sp", ss) if len(ss) >= 2 else None
-        Bidx = defaultdict(list)
+        Aidx = defaultdict(list); Bidx = defaultdict(list)
         for r in b.classes():
             h = H(r)
             if h: Bidx[h].append(r["id"])
         for r in a.classes():
             h = H(r)
-            if not h: continue
-            for bid in Bidx.get(h, ()):
-                yield Candidate(r["id"], bid, 0.85, self.id, ("string_pair",))
+            if h: Aidx[h].append(r["id"])
+        for h, alst in Aidx.items():
+            blst = Bidx.get(h)
+            if not blst: continue
+            for aid, bid in _resolve_ambiguous(alst, blst, a, b):
+                yield Candidate(aid, bid, 0.85, self.id, ("string_pair",))
 
 
 # --------------------------------------------------------------------------- #
