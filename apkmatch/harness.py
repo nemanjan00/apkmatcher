@@ -158,12 +158,78 @@ def evaluate(result: dict, A: InMemoryProject, B: InMemoryProject) -> dict:
     }
 
 
+def per_matcher_long_range_precision(
+    result, A, B, min_strings: int = 2, str_len: int = 6,
+    correct_thresh: float = 0.5, wrong_thresh: float = 0.2,
+) -> dict:
+    """When A is partially un-obfuscated (e.g. v226), the A-side FQN
+    of any A->B pair with A in a stable namespace and B in LX/ is a
+    ground-truth label. Validate the pair by string overlap between
+    A's class and B's chosen partner. Returns per-matcher
+    {correct, maybe, wrong, unknown} counters.
+
+    Only pairs where the A-side has ``>= min_strings`` distinct
+    strings of length ``>= str_len`` are scored. Pairs where the A
+    FQN also exists as a stable class in B are excluded — those are
+    trivial FQN matches and uninteresting for matcher precision.
+    """
+    from collections import Counter, defaultdict
+    B_stable_ids = {cid for cid in B.ids() if not cid.startswith("LX/")}
+    results: dict[str, Counter] = defaultdict(Counter)
+    for p in result["mapping"]:
+        a, b = p["a"], p["b"]
+        if a.startswith("LX/"):
+            continue
+        if a in B_stable_ids:
+            continue  # trivial FQN match
+        ra = A.get(a)
+        if not ra:
+            continue
+        sa = {s for s in ra["strings"] if len(s) >= str_len}
+        if len(sa) < min_strings:
+            continue
+        rb = B.get(b)
+        if not rb:
+            for mid in p["matchers"]:
+                results[mid]["unknown"] += 1
+            continue
+        sb = {s for s in rb["strings"] if len(s) >= str_len}
+        if not sb:
+            for mid in p["matchers"]:
+                results[mid]["unknown"] += 1
+            continue
+        overlap = len(sa & sb) / len(sa)
+        if overlap >= correct_thresh:   label = "correct"
+        elif overlap < wrong_thresh:    label = "wrong"
+        else:                            label = "maybe"
+        for mid in p["matchers"]:
+            results[mid][label] += 1
+    out: dict[str, dict] = {}
+    for mid, c in results.items():
+        n = sum(c.values())
+        cor, wr = c.get("correct", 0), c.get("wrong", 0)
+        prec = cor / max(1, cor + wr)
+        out[mid] = {
+            "n": n,
+            "correct": cor, "maybe": c.get("maybe", 0),
+            "wrong": wr, "unknown": c.get("unknown", 0),
+            "precision_estimate": prec,
+        }
+    return out
+
+
 def main(argv=None):
     p = argparse.ArgumentParser("apkmatch-harness")
     p.add_argument("result", help="result.json from `apkmatch.cli match`")
     p.add_argument("A", help="A.jsonl used to produce the result")
     p.add_argument("B", help="B.jsonl used to produce the result")
     p.add_argument("--out", default=None)
+    p.add_argument(
+        "--per-matcher-oracle", action="store_true",
+        help=("Also compute per-matcher precision estimates by treating "
+              "A-side FQNs as ground-truth labels. Useful only when A is "
+              "an APK with un-obfuscated names (e.g. IG v226)."),
+    )
     args = p.parse_args(argv)
 
     print(f"[harness] loading projects...", file=sys.stderr)
@@ -173,6 +239,10 @@ def main(argv=None):
     result = _load_result(args.result)
 
     report = evaluate(result, A, B)
+    if args.per_matcher_oracle:
+        report["per_matcher_long_range"] = per_matcher_long_range_precision(
+            result, A, B
+        )
     text = json.dumps(report, indent=2)
     if args.out:
         with open(args.out, "w") as f:
