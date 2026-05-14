@@ -6,7 +6,7 @@ ever see it through the read-only MappingView surface.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterator, Optional
+from typing import Iterator, Optional, Set
 
 
 @dataclass
@@ -25,9 +25,22 @@ class MutableMapping:
     """The engine writes here; the view methods satisfy MappingView."""
 
     def __init__(self, confirmation_threshold: float = 0.6,
-                 displace_margin: float = 0.1):
+                 displace_margin: float = 0.1,
+                 a_stable_ids: Optional[set] = None,
+                 b_stable_ids: Optional[set] = None):
         self.confirmation_threshold = confirmation_threshold
         self.displace_margin = displace_margin
+        # Set of stable (non-LX) class IDs present in each project.
+        # Used by the cross-namespace guard: a stable class in A is
+        # only allowed to pair with a different namespace in B if its
+        # FQN does NOT exist as a stable class in B (i.e., it was
+        # rotated into LX/ in B). Same in reverse. Without these
+        # sets, the guard treats any stable<->LX pair as nonsense,
+        # which is correct for same-version compares but blocks
+        # long-range matching (e.g. v226→v415, where many com/insta-
+        # gram/* classes ARE the correct partner for v415's LX/* ids).
+        self._a_stable_ids: set = a_stable_ids or set()
+        self._b_stable_ids: set = b_stable_ids or set()
         self._a2b: dict[str, str] = {}
         self._b2a: dict[str, str] = {}
         self._conf: dict[str, float] = {}
@@ -78,18 +91,31 @@ class MutableMapping:
         """Returns the outcome: 'added' / 'updated' / 'displaced' /
         'rejected' / 'locked-blocked' / 'negative' / 'cross-ns'."""
 
-        # Cross-namespace guard: stable (non-LX) classes from one APK
-        # MUST match a stable class with the same FQN — otherwise the
-        # match is nonsense (the class either exists with the same
-        # name in B or doesn't exist at all). Catches noisy matchers
-        # like native_syms that find shared JNI symbol patterns
-        # across unrelated classes.
+        # Cross-namespace guard. Stable (non-LX) classes mostly
+        # round-trip by FQN, so a stable<->stable pair must have
+        # equal FQNs. For mixed stable<->LX pairs, we used to reject
+        # them outright (which is correct for v415<->v416 where both
+        # builds share namespacing conventions). For long-range
+        # matches like v226->v415 the same class can be stable in
+        # one build and rotated into LX/ in the other; that's the
+        # legit case the guard must allow. Permit the cross-ns pair
+        # only when the stable side's FQN does NOT exist as a stable
+        # class in the OTHER project — i.e. it was rotated.
         a_stable = not a.startswith("LX/")
         b_stable = not b.startswith("LX/")
-        if a_stable != b_stable:
-            return "cross-ns"
-        if a_stable and a != b:
-            return "cross-ns"
+        if a_stable and b_stable:
+            if a != b:
+                return "cross-ns"
+        elif a_stable and not b_stable:
+            # A is stable, B is LX. Allowed iff A's FQN is not
+            # present as a stable class in B (i.e. it was rotated).
+            if a in self._b_stable_ids:
+                return "cross-ns"
+        elif b_stable and not a_stable:
+            # B is stable, A is LX. Allowed iff B's FQN is not
+            # present as a stable class in A.
+            if b in self._a_stable_ids:
+                return "cross-ns"
 
         cur_b = self._a2b.get(a)
         cur_b_owner = self._b2a.get(b)

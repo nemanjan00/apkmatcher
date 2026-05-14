@@ -101,9 +101,17 @@ class Engine:
         self.a = a; self.b = b
         self.matchers = matchers or DEFAULT_MATCHERS
         self.validators = validators if validators is not None else DEFAULT_VALIDATORS
+        # Pre-compute stable-class id sets for the cross-namespace
+        # guard. Lets the guard distinguish "stable<->LX nonsense"
+        # (same-version compares) from "stable A rotated to LX B"
+        # (long-range compares like v226->v415).
+        a_stable = {cid for cid in a.ids() if not cid.startswith("LX/")}
+        b_stable = {cid for cid in b.ids() if not cid.startswith("LX/")}
         self.mapping = MutableMapping(
             confirmation_threshold=confirmation_threshold,
             displace_margin=displace_margin,
+            a_stable_ids=a_stable,
+            b_stable_ids=b_stable,
         )
         self.tier3_max_iters = tier3_max_iters
         self.tier3_min_churn = tier3_min_churn
