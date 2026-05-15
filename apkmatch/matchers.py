@@ -42,6 +42,32 @@ def _stable_refs(project: InMemoryProject, cid: str) -> list[str]:
     return project.stable_refs(cid)
 
 
+# Stable refs so common they don't count as co-evidence between two
+# classes — any two random classes are likely to touch most of these.
+# Used by LongUniqueString to gate emit confidence on whether the
+# pair shares any *non-trivial* stable ref.
+_TRIVIAL_REFS = frozenset({
+    "Ljava/lang/Object;", "Ljava/lang/String;", "Ljava/lang/Integer;",
+    "Ljava/lang/Long;", "Ljava/lang/Boolean;", "Ljava/lang/Float;",
+    "Ljava/lang/Double;", "Ljava/lang/Math;", "Ljava/lang/System;",
+    "Ljava/lang/Number;", "Ljava/lang/Class;", "Ljava/lang/Enum;",
+    "Ljava/lang/Throwable;", "Ljava/lang/Exception;",
+    "Ljava/lang/RuntimeException;", "Ljava/lang/IllegalStateException;",
+    "Ljava/lang/IllegalArgumentException;",
+    "Ljava/lang/CharSequence;", "Ljava/lang/StringBuilder;",
+    "Ljava/util/List;", "Ljava/util/Map;", "Ljava/util/Set;",
+    "Ljava/util/Iterator;", "Ljava/util/Collection;",
+    "Ljava/util/ArrayList;", "Ljava/util/HashMap;",
+    "Ljava/util/AbstractCollection;", "Ljava/util/AbstractMap;",
+    "Lkotlin/jvm/functions/Function0;",
+    "Lkotlin/jvm/functions/Function1;",
+    "Lkotlin/jvm/functions/Function2;",
+    "Lkotlin/Unit;", "Lkotlin/Pair;",
+    "Lkotlinx/coroutines/CoroutineScope;",
+    "Lredex/$StoreFenceHelper;",
+})
+
+
 # --------------------------------------------------------------------------- #
 # Bucket tie-breaking
 # --------------------------------------------------------------------------- #
@@ -332,9 +358,26 @@ class StringSetHash:
 
 class LongUniqueString:
     """A *single* long string literal (>= 20 chars) that appears in
-    exactly one class on each side. Long strings collide far less than
-    short ones — this is essentially zero-false-positive when it fires."""
+    exactly one class on each side.
+
+    Long strings collide far less than short ones — within a single
+    build pair this is near-zero false positives, but the v226 ground-
+    truth oracle showed it dropping to ~47 % precision on long-range
+    matches. The failure mode is two unrelated R8 lambda-merge bag
+    classes happening to share one unique string survivor.
+
+    The fix: when emitting, downgrade confidence (and drop entirely
+    at very low corroboration) based on a quick co-evidence check —
+    do A and B share any *other* signal beyond this single string?
+    Cheapest such signal: at least one stable (non-LX) tref in common.
+    A peer-FQN ratio of 0 means there's a long string match but
+    nothing else in common — likely a coincidental shared error
+    message. Drop those.
+    """
     id = "long_unique_string"; tier = 2
+
+    def __init__(self, require_stable_corroboration: bool = True):
+        self.require_stable_corroboration = require_stable_corroboration
 
     def propose(self, a, b):
         sA = defaultdict(list); sB = defaultdict(list)
@@ -350,7 +393,24 @@ class LongUniqueString:
             if len(alst) != 1: continue
             blst = sB.get(s)
             if blst and len(blst) == 1:
-                yield Candidate(alst[0], blst[0], 0.95, self.id,
+                aid, bid = alst[0], blst[0]
+                # Co-evidence gate. Compute shared stable refs (super,
+                # impls, calls, facc, trefs filtered to non-LX). If we
+                # require corroboration and there's none, downgrade.
+                if self.require_stable_corroboration:
+                    sa_refs = set(a.stable_refs(aid))
+                    sb_refs = set(b.stable_refs(bid))
+                    # Drop Object/String/etc — too common.
+                    sa_refs -= _TRIVIAL_REFS
+                    sb_refs -= _TRIVIAL_REFS
+                    shared = sa_refs & sb_refs
+                    if not shared:
+                        # No co-evidence: downgrade confidence so
+                        # other matchers can override.
+                        yield Candidate(aid, bid, 0.55, self.id,
+                                        ("long_unique_str_uncorrob", s[:40]))
+                        continue
+                yield Candidate(aid, bid, 0.95, self.id,
                                 ("long_unique_str", s[:40]))
 
 
@@ -1716,6 +1776,66 @@ class JaccardStrings:
                 conf = 0.6 + 0.32 * (jac - self.min_jaccard) / (1 - self.min_jaccard)
                 yield Candidate(ra["id"], bid, conf, self.id,
                                 ("jaccard_strings", round(jac, 2), n))
+
+
+class ContainedStrings:
+    """Tier 2. Directional containment: A's strings are a (near-)subset
+    of B's strings, where B has substantially more strings.
+
+    Catches R8's class-merge optimisation: between distant builds, R8
+    will fuse many small related classes (e.g. all `*DebugConfiguration`
+    siblings) into a single mega-class. The merged class's string set
+    is the union, so the small originals' strings still appear in it.
+    JaccardStrings can't catch this because the union is dominated by
+    other absorbed siblings' strings (jaccard ≈ 0.01 on the merged
+    target).
+
+    Requires ``min_strings`` distinct A-side strings (default 3) and
+    ``min_ratio`` containment (default 0.8 — at least 80 % of A's
+    strings appear in B). Also requires B to be much larger (``b_to_a
+    >= 2``) so peers don't trigger this.
+
+    Confidence: 0.75 baseline — below identical_strings (0.97) and
+    long_unique_string (0.95) so genuine 1:1 matches always win.
+
+    Cross-validation on v226 -> v415: catches 63 confirmable
+    class-merge cases that no other matcher reaches (e.g. v226's
+    ``ImageDebugConfiguration`` -> v415's ``LX/Awd``, which has 313
+    fields and 910 strings).
+    """
+    id = "contained_strings"; tier = 2
+
+    def __init__(self, min_strings: int = 3, min_ratio: float = 0.8,
+                 b_to_a: float = 2.0, str_len: int = 8):
+        self.min_strings = min_strings
+        self.min_ratio = min_ratio
+        self.b_to_a = b_to_a
+        self.str_len = str_len
+
+    def propose(self, a, b):
+        for ra in a.classes():
+            sa = {s for s in ra["strings"] if len(s) >= self.str_len}
+            if len(sa) < self.min_strings:
+                continue
+            counts: dict[str, int] = defaultdict(int)
+            for s in sa:
+                for bid in b.classes_containing_string(s):
+                    counts[bid] += 1
+            thresh = max(self.min_strings, int(self.min_ratio * len(sa)))
+            for bid, n in counts.items():
+                if n < thresh:
+                    continue
+                rb = b.get(bid)
+                if rb is None: continue
+                sb = {s for s in rb["strings"] if len(s) >= self.str_len}
+                if len(sb) < self.b_to_a * len(sa):
+                    continue
+                # Confidence: scales with containment ratio.
+                ratio = n / len(sa)
+                conf = 0.65 + 0.15 * (ratio - self.min_ratio) / (1 - self.min_ratio + 1e-9)
+                yield Candidate(ra["id"], bid, min(conf, 0.85),
+                                self.id,
+                                ("contained_strings", n, len(sa), len(sb)))
 
 
 class ExtendedByLockStep:
@@ -3142,6 +3262,7 @@ DEFAULT_MATCHERS = [
     # AnonBodyHashJaccard tried but caused slight regression — fuzzy
     # body matches displace better exact matches from other matchers.
     JaccardStrings(min_jaccard=0.7, min_overlap=3),
+    ContainedStrings(min_strings=3, min_ratio=0.8, b_to_a=2.0),
     LineRefMultiset(min_refs=4),
 
     # ---- Tier 3: propagation, iterated --------------------------------
